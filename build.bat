@@ -14,5 +14,5 @@ if "clean"=="%1" (
     popd
 ) else (
     if not exist bin\ mkdir bin
-    gcc -O2 -municode -IInclude Win32.c -o bin\Graph.exe -lgdi32
+    gcc -municode -IInclude Win32.c -o bin\Graph.exe -lgdi32
 )

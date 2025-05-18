@@ -275,10 +275,6 @@ void Platform_SetFrameTimeTarget(double MillisecPerFrame)
     sWin32_FrameTimeTargetMs = MillisecPerFrame;
 }
 
-u32 Platform_RGB(u8 r, u8 g, u8 b)
-{
-    return RGB(r, g, b);
-}
 
 double Platform_GetFrameTimeMs(void)
 {

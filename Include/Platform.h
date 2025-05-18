@@ -5,6 +5,7 @@
 #define true 1
 #define false 0
 typedef uint8_t bool8;
+typedef int64_t i64;
 typedef uint32_t u32;
 typedef int32_t i32;
 typedef int16_t i16;
@@ -42,6 +43,12 @@ typedef struct platform_window_dimensions
     i32 Width, Height;
 } platform_window_dimensions;
 
+
+typedef struct axis 
+{
+    double TickLength;
+    double MajorTickSpacing;
+} axis;
 typedef struct graph_state 
 {
     int PrevMouseX, PrevMouseY;
@@ -51,6 +58,9 @@ typedef struct graph_state
     double GraphWidth;
     double GraphHeight;
     double Scale, ScaleInv;
+
+    axis X, Y;
+    bool8 ShouldRedraw;
 } graph_state;
 
 
