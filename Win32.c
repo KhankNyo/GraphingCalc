@@ -28,9 +28,9 @@ static double sWin32_FrameTimeTargetMs;
 static LARGE_INTEGER sWin32_PerfCountBegin;
 static double sWin32_FrameTimeMs;
 
-static void Win32_Fatal(const wchar_t *ErrorMessage)
+static void Win32_Fatal(const char *ErrorMessage)
 {
-    MessageBoxW(NULL, ErrorMessage, L"Fatal Error", MB_ICONERROR);
+    MessageBoxA(NULL, ErrorMessage, "Fatal Error", MB_ICONERROR);
     ExitProcess(1);
 }
 
@@ -56,7 +56,7 @@ static win32_context Win32_CreateBackBuffer(int Width, int Height)
     );
     if (NULL == Ctx.BackBuffer.Ptr)
     {
-        Win32_Fatal(L"Out of memory");
+        Win32_Fatal("Out of memory");
     }
     return Ctx;
 }
@@ -133,7 +133,7 @@ static LRESULT CALLBACK Win32_MainWndProc(HWND Window, UINT Msg, WPARAM wParam, 
         Graph_OnMouseEvent(&sWin32_GraphState, &Data);
     } break;
     default: 
-        return DefWindowProcW(Window, Msg, wParam, lParam);
+        return DefWindowProcA(Window, Msg, wParam, lParam);
     }
     return 0;
 }
@@ -142,29 +142,29 @@ static LRESULT CALLBACK Win32_MainWndProc(HWND Window, UINT Msg, WPARAM wParam, 
 static BOOL Win32_PollInputs(void)
 {
     MSG Msg;
-    while (PeekMessageW(&Msg, 0, 0, 0, PM_REMOVE))
+    while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE))
     {
         if (Msg.message == WM_QUIT)
             return FALSE;
 
         TranslateMessage(&Msg);
-        DispatchMessageW(&Msg);
+        DispatchMessageA(&Msg);
     }
     return TRUE;
 }
 
-int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, int CmdShow)
+int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PCHAR CmdLine, int CmdShow)
 {
     (void)PrevInstance, (void)CmdLine, (void)CmdShow;
-    WNDCLASSEXW WindowClass = {
+    WNDCLASSEXA WindowClass = {
         .cbSize = sizeof WindowClass,
         .hInstance = Instance,
         .style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
         .lpfnWndProc = Win32_MainWndProc,
-        .lpszClassName = L"AppCls",
-        .hCursor = LoadCursorW(NULL, (LPWSTR)IDC_ARROW),
+        .lpszClassName = "AppCls",
+        .hCursor = LoadCursorA(NULL, (LPSTR)IDC_ARROW),
     };
-    RegisterClassExW(&WindowClass);
+    RegisterClassExA(&WindowClass);
 
     /* initializer timer */
     {
@@ -176,10 +176,10 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
 
     /* graph entry & window creation */
     sWin32_GraphState = Graph_OnEntry();
-    sWin32_MainWindowHandle = CreateWindowExW(
+    sWin32_MainWindowHandle = CreateWindowExA(
         WS_EX_CLIENTEDGE, 
-        L"AppCls", 
-        L"Graph", 
+        "AppCls", 
+        "Graph", 
         WS_OVERLAPPEDWINDOW | WS_BORDER | WS_CAPTION, 
         CW_USEDEFAULT, 
         CW_USEDEFAULT, 
@@ -192,7 +192,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     );
     if (NULL == sWin32_MainWindowHandle)
     {
-        Win32_Fatal(L"Unable to create window.");
+        Win32_Fatal("Unable to create window.");
     }
 
 
