@@ -8,6 +8,7 @@
     b = t;\
 } while (0)
 #define IN_RANGE(lower, n, upper) ((lower) <= (n) && (n) <= (upper))
+#define IN_RANGEX(lower, n, upper) ((lower) < (n) && (n) < (upper))
 #define GRAPH_X(p_ctx, x) (x)
 #define GRAPH_Y(p_ctx, y) (y)
 #define IDX(p_ctx, x, y) (GRAPH_Y(p_ctx, y)*(p_ctx)->Width + GRAPH_X(p_ctx, x))
@@ -142,6 +143,7 @@ static double FloorToMultiple(double x, double Multiple)
 
 
 
+
 static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
 {
     double Dy = AbsF(y1 - y0);
@@ -202,15 +204,6 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
     }
 }
 
-
-
-
-static void GraphUpdateScaling(graph_state *State, const platform_screen_buffer *Ctx)
-{
-    State->Scale = State->GraphWidth / Ctx->Width;
-    State->ScaleInv = 1.0 / State->Scale;
-}
-
 static void GraphDrawLine(
     const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
 {    
@@ -222,17 +215,162 @@ static void GraphDrawLine(
 }
 
 
-static void GraphUpdateAxis(const graph_state *State, int CtxWidth, axis *A, graph_to_scr_fn GraphToScr)
+
+static void GraphUpdateScaling(graph_state *State, int CtxWidth)
 {
-    A->TickLength = State->GraphHeight / 50.0 * .5;
-    if ((int)GraphToScr(A->MajorTickSpacing, State->ScaleInv, 0) > CtxWidth/10)
+    State->Scale = State->GraphWidth / CtxWidth;
+    State->ScaleInv = 1.0 / State->Scale;
+}
+
+static void GraphUpdateBackground(graph_state *State, int CtxWidth)
+{
+    int ZoomOutThreshold = CtxWidth/16;
+    int ZoomInThreshold = CtxWidth/8;
+    if ((int)GraphToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) > ZoomInThreshold)
     {
-        A->MajorTickSpacing /= 2;
+        State->Bg.MajorXSpacing /= 2;
     }
-    else if ((int)GraphToScr(A->MajorTickSpacing, State->ScaleInv, 0) < CtxWidth/20)
+    else if ((int)GraphToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
     {
-        A->MajorTickSpacing *= 2;
+        State->Bg.MajorXSpacing *= 2;
     }
+
+    if ((int)GraphToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) > ZoomInThreshold)
+    {
+        State->Bg.MajorYSpacing /= 2;
+    }
+    else if ((int)GraphToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
+    {
+        State->Bg.MajorYSpacing *= 2;
+    }
+}
+
+static void GraphDrawBackground(const graph_state *State, platform_screen_buffer *Ctx)
+{
+    double GraphLeft = State->GraphLeft;
+    double GraphTop = State->GraphTop;
+    double GraphBottom = State->GraphTop - State->GraphHeight;
+    double GraphRight = State->GraphLeft + State->GraphWidth;
+    int Width = Ctx->Width;
+    int Height = Ctx->Height;
+
+    u32 MainAxisColor = State->Bg.MainAxisColor;
+    u32 MinorTickColor = State->Bg.MinorTickColor;
+    u32 MajorTickColor = State->Bg.MajorTickColor;
+    u32 Bg = State->Bg.BackgroundColor;
+
+    int MinorTickCount = State->Bg.MinorTickCount;
+    int MajorTickThickness = State->Bg.MajorTickThickness;
+    int MinorTickThickness = State->Bg.MinorTickThickness;
+    int MainAxisThickness = State->Bg.MainAxisThickness;
+
+    /* background */
+    u32 *Ptr = Ctx->Ptr;
+    for (int y = 0; y < Height; y++)
+    {
+        for (int x = 0; x < Width; x++)
+        {
+            *Ptr++ = Bg;
+        }
+    }
+    
+    /* minor ticks */
+    /* x */
+    int SpaceCount = MinorTickCount + 1;
+    double MinorTickSpacing = State->Bg.MajorXSpacing / SpaceCount;
+    for (double x = GraphLeft - State->Bg.MajorXSpacing; 
+        x < GraphRight + State->Bg.MajorXSpacing; 
+        x += State->Bg.MajorXSpacing)
+    {
+        double MajorX = FloorToMultiple(x, State->Bg.MajorXSpacing);
+        for (int k = 1; k <= MinorTickCount; k++)
+        {
+            double MinorX = MajorX + k*MinorTickSpacing;
+            if (MinorX <= GraphLeft || GraphRight <= MinorX)
+                continue;
+
+            GraphDrawLine(
+                State, Ctx, 
+                MinorX, GraphTop, 
+                MinorX, GraphBottom,
+                MinorTickThickness,
+                MinorTickColor
+            );
+        }
+    }
+    /* y */
+    for (double y = GraphBottom - State->Bg.MajorXSpacing; 
+        y < GraphTop + State->Bg.MajorYSpacing; 
+        y += State->Bg.MajorYSpacing)
+    {
+        double MajorY = FloorToMultiple(y, State->Bg.MajorYSpacing);
+        for (int k = 1; k <= MinorTickCount; k++)
+        {
+            double MinorY = MajorY + k*MinorTickSpacing;
+            if (MinorY <= GraphBottom || GraphTop <= MinorY)
+                continue;
+
+            GraphDrawLine(
+                State, Ctx, 
+                GraphLeft, MinorY, 
+                GraphRight, MinorY,
+                MinorTickThickness,
+                MinorTickColor
+            );
+        }
+    }
+
+    /* major ticks/axes */
+    /* x */
+    for (double x = GraphLeft; 
+        x < GraphRight + State->Bg.MajorXSpacing; 
+        x += State->Bg.MajorXSpacing)
+    {
+        double MajorX = FloorToMultiple(x, State->Bg.MajorXSpacing);
+        if (0 == MajorX || !IN_RANGEX(GraphLeft, MajorX, GraphRight))
+            continue;
+        GraphDrawLine(
+            State, Ctx, 
+            MajorX, GraphTop, 
+            MajorX, GraphBottom,
+            MajorTickThickness, 
+            MajorTickColor
+        );
+    }
+    /* y */
+    for (double y = GraphBottom; 
+        y < GraphTop + State->Bg.MajorYSpacing; 
+        y += State->Bg.MajorYSpacing)
+    {
+        double MajorY = FloorToMultiple(y, State->Bg.MajorYSpacing);
+
+        if (0 == MajorY || !IN_RANGEX(GraphLeft, MajorY, GraphRight))
+            continue;
+        GraphDrawLine(
+            State, Ctx, 
+            GraphLeft, MajorY, 
+            GraphRight, MajorY,
+            MajorTickThickness, 
+            MajorTickColor
+        );
+    }
+    /* Main axes */
+    /* x */
+    GraphDrawLine(
+        State, Ctx, 
+        0, GraphTop, 
+        0, GraphBottom,
+        MainAxisThickness, 
+        MainAxisColor
+    );
+    /* y */
+    GraphDrawLine(
+        State, Ctx, 
+        GraphLeft, 0, 
+        GraphRight, 0, 
+        MainAxisThickness, 
+        MainAxisColor
+    );
 }
 
 
@@ -250,14 +388,23 @@ graph_state Graph_OnEntry(void)
         .GraphTop = 10 * AspectRatio,
         .GraphHeight = 20 * AspectRatio,
 
-        .X.TickLength = ScrHeight/50.0 * .5,
-        .X.MajorTickSpacing = 2.0,
+        .Bg = {
+            .MajorXSpacing = 2.0,
+            .MajorYSpacing = 2.0,
 
-        .Y.TickLength = ScrHeight/50.0 * .5,
-        .Y.MajorTickSpacing = 2.0,
+            .MainAxisColor = Grayscale(0),
+            .MinorTickColor = Grayscale(0xC0),
+            .MajorTickColor = Grayscale(0x90),
+            .BackgroundColor = Grayscale(0xD0),
+
+            .MinorTickCount = 3,
+
+            .MajorTickThickness = 2,
+            .MinorTickThickness = 1,
+            .MainAxisThickness = 3,
+        },
     };
-    State.Scale = State.GraphWidth / ScrWidth;
-    State.ScaleInv = 1 / State.Scale;
+    GraphUpdateScaling(&State, ScrWidth);
     return State;
 }
 
@@ -285,6 +432,7 @@ void Graph_OnLoop(graph_state *State)
 
 void Graph_OnExit(graph_state *State)
 {
+    (void)State;
 }
 
 
@@ -335,98 +483,29 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
 
 void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
 {   
-    GraphUpdateScaling(State, Ctx);
-
-    double GraphBottom = State->GraphTop - State->GraphHeight;
-    double GraphRight = State->GraphLeft + State->GraphWidth;
-    u32 GraphColor = RGB(0xFF, 0x80, 0x00);
-    u32 MainAxisColor = RGB(0, 0, 0);
-    u32 MinorTickColor = Grayscale(0xC0);
-    u32 MajorTickColor = Grayscale(0x90);
-    u32 Bg = Grayscale(0xD0);
     int Width = Ctx->Width;
-    int Height = Ctx->Height;
-    int MinorTickCount = 3;
+    GraphUpdateScaling(State, Width);
+    GraphUpdateBackground(State, Width);
 
+    double GraphLeft = State->GraphLeft;
+    double GraphTop = State->GraphTop;
+    double GraphBottom = State->GraphTop - State->GraphHeight;
+
+    u32 GraphColor = RGB(0xFF, 0x80, 0x00);
     int GraphThickness = 3;
-    int MajorTickThickness = 3;
-    int MinorTickThickness = 2;
-    int XAxisThickness = 3;
-    int YAxisThickness = 3;
 
-
-    GraphUpdateAxis(State, Width, &State->X, GraphToScrX);
-    GraphUpdateAxis(State, Width, &State->Y, GraphToScrX);
-
-
-    /* background */
-    u32 *Ptr = Ctx->Ptr;
-    for (int y = 0; y < Height; y++)
-    {
-        for (int x = 0; x < Width; x++)
-        {
-            *Ptr++ = Bg;
-        }
-    }
-
-    /* x axis */
-    int SpaceCount = MinorTickCount + 1;
-    double MinorTickSpacing = State->X.MajorTickSpacing / SpaceCount;
-    for (double i = 0; i < State->GraphWidth + State->X.MajorTickSpacing; i += State->X.MajorTickSpacing)
-    {
-        double X = FloorToMultiple(i + State->GraphLeft, State->X.MajorTickSpacing);
-        /* major tick */
-        if (X != 0.0)
-        {
-            /* TODO: tick vs axis */
-            //GraphDrawLine(State, Ctx, X, -State->X.TickLength, X, State->X.TickLength, MajorTickThickness, MajorTickColor);
-            GraphDrawLine(State, Ctx, X, State->GraphTop, X, GraphBottom, MajorTickThickness, MajorTickColor);
-        }
-        for (int k = 1; k <= MinorTickCount; k++)
-        {
-            GraphDrawLine(State, Ctx, 
-                X + k*MinorTickSpacing, State->GraphTop, 
-                X + k*MinorTickSpacing, GraphBottom, 
-                MinorTickThickness, MinorTickColor
-            );
-        }
-    }
-    GraphDrawLine(State, Ctx, State->GraphLeft, 0, GraphRight, 0, XAxisThickness, MainAxisColor);
-
-
-    /* y axis */
-    for (double i = 0; i < State->GraphHeight + State->Y.MajorTickSpacing; i += State->Y.MajorTickSpacing)
-    {
-        double Y = FloorToMultiple(i + GraphBottom, State->Y.MajorTickSpacing);
-        /* major tick */
-        if (Y != 0.0)
-        {
-            //GraphDrawLine(State, Ctx, -State->Y.TickLength, Y, State->Y.TickLength, Y, MajorTickThickness, MajorTickColor);
-            GraphDrawLine(State, Ctx, State->GraphLeft, Y, GraphRight, Y, MajorTickThickness, MajorTickColor);
-        }
-
-        /* minor tick */
-        for (int k = 1; k <= MinorTickCount; k++)
-        {
-            GraphDrawLine(State, Ctx, 
-                State->GraphLeft, Y + k*MinorTickSpacing,
-                GraphRight, Y + k*MinorTickSpacing, 
-                MinorTickThickness, MinorTickColor
-            );
-        }
-    }
-    GraphDrawLine(State, Ctx, 0, State->GraphTop, 0, GraphBottom, YAxisThickness, MainAxisColor);
+    GraphDrawBackground(State, Ctx);
 
 
     /* function graph */
-    double PrevX = State->GraphLeft;
+    double PrevX = GraphLeft;
     double PrevY = Fn(PrevX);
     for (int x = 1; x < Width; x++)
     {
         double X = GRAPH_FROM_SCR_X(x);
         double Y = Fn(X);
-        if (IN_RANGE(GraphBottom, PrevY, State->GraphTop) 
-        || IN_RANGE(GraphBottom, Y, State->GraphTop))
+        if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
+        || IN_RANGE(GraphBottom, Y, GraphTop))
         {
             GraphDrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColor);
         }

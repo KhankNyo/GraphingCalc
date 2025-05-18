@@ -45,11 +45,23 @@ typedef struct platform_window_dimensions
 } platform_window_dimensions;
 
 
-typedef struct axis 
+
+typedef struct background 
 {
-    double TickLength;
-    double MajorTickSpacing;
-} axis;
+    double MajorXSpacing;
+    double MajorYSpacing;
+
+    u32 MainAxisColor;
+    u32 MinorTickColor;
+    u32 MajorTickColor;
+    u32 BackgroundColor;
+
+    int MinorTickCount;
+    int MinorTickThickness;
+    int MajorTickThickness;
+    int MainAxisThickness;
+} background;
+
 typedef struct graph_state 
 {
     int PrevMouseX, PrevMouseY;
@@ -60,7 +72,7 @@ typedef struct graph_state
     double GraphHeight;
     double Scale, ScaleInv;
 
-    axis X, Y;
+    background Bg;
     bool8 ShouldRedraw;
 } graph_state;
 
