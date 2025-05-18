@@ -142,61 +142,6 @@ static double FloorToMultiple(double x, double Multiple)
 
 
 
-
-static void DrawLineBresenham(platform_screen_buffer *Ctx, int x0, int y0, int x1, int y1, int Thickness, u32 Color)
-{
-    int Dx = ABSI(x1 - x0);
-    int Dy = ABSI(y1 - y0);
-    if (Dx > Dy) /* the line will be more horizontal */
-    {
-        if (x0 > x1)
-        {
-            SWAP(int, x0, x1);
-            SWAP(int, y0, y1);
-        }
-        int AccumY = 0;
-        int y = y0;
-        int Inc = y0 < y1? 1 : -1;
-        for (int x = x0; x <= x1; x++)
-        {
-            for (int i = -Thickness/2; i < Thickness/2 + Thickness % 2; i++)
-            {
-                POKE(Ctx, x, y + i) = Color;
-            }
-            AccumY += Dy;
-            if (AccumY >= Dx)
-            {
-                AccumY -= Dx;
-                y += Inc;
-            }
-        }
-    }
-    else
-    {
-        if (y0 > y1)
-        {
-            SWAP(int, x0, x1);
-            SWAP(int, y0, y1);
-        }
-        int AccumX = 0;
-        int x = x0;
-        int Inc = x0 < x1? 1 : -1;
-        for (int y = y0; y <= y1; y++)
-        {
-            for (int i = -Thickness/2; i < Thickness/2 + Thickness % 2; i++)
-            {
-                POKE(Ctx, x + i, y) = Color;
-            }
-            AccumX += Dx;
-            if (AccumX >= Dy)
-            {
-                AccumX -= Dy;
-                x += Inc;
-            }
-        }
-    }
-}
-
 static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
 {
     double Dy = AbsF(y1 - y0);
@@ -214,8 +159,8 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
         SWAP(double, y0, y1);
     }
 
-    Dy = AbsF(y1 - y0);
-    Dx = AbsF(x1 - x0);
+    Dy = (y1 - y0);
+    Dx = (x1 - x0);
     double Gradient = Dx == 0
         ? 1.0 
         : (double)Dy / Dx;
@@ -228,15 +173,16 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
     int X1 = Round(x1);
 
     /* main loop */
+    int VerticalIndex = 0;
     if (MoreVertical)
     {
         for (int x = X0; x <= X1; x++)
         {
             int y = Y;
-            for (int i = -Thickness/2; i < Thickness/2 + Thickness % 2; i++)
+            for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
             {
-                GraphMixColorWithBg(Ctx, y, x + i, Color, RecipFrac(Y));
-                GraphMixColorWithBg(Ctx, y + 1, x + i, Color, Frac(Y));
+                GraphMixColorWithBg(Ctx, y + VerticalIndex, x + i, Color, RecipFrac(Y));
+                GraphMixColorWithBg(Ctx, y + 1 + VerticalIndex, x + i, Color, Frac(Y));
             }
             Y += Gradient;
         }
@@ -246,10 +192,10 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
         for (int x = X0; x <= X1; x++)
         {
             int y = Y;
-            for (int i = -Thickness/2; i < Thickness/2 + Thickness % 2; i++)
+            for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
             {
-                GraphMixColorWithBg(Ctx, x + i, y, Color, RecipFrac(Y));
-                GraphMixColorWithBg(Ctx, x + i, y + 1, Color, Frac(Y));
+                GraphMixColorWithBg(Ctx, x + i, y + VerticalIndex, Color, RecipFrac(Y));
+                GraphMixColorWithBg(Ctx, x + i, y + 1 + VerticalIndex, Color, Frac(Y));
             }
             Y += Gradient;
         }
@@ -267,7 +213,7 @@ static void GraphUpdateScaling(graph_state *State, const platform_screen_buffer 
 
 static void GraphDrawLine(
     const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
-{
+{    
     double ScrX0 = GRAPH_TO_SCR_X(x0);
     double ScrY0 = GRAPH_TO_SCR_Y(y0);
     double ScrX1 = GRAPH_TO_SCR_X(x1);
@@ -320,7 +266,7 @@ void Graph_OnLoop(graph_state *State)
     double MsPerFrame = Platform_GetFrameTimeMs();
     double FPS = 1000 / MsPerFrame;
 #if 1
-    printf("\rt: %2.2f, l: %2.2f, w: %2.2f, h: %2.2f, t=%.3fs, f=%3.2ffps - %4.2fms", 
+    printf("\rt: %g, l: %g, w: %g, h: %g, t=%.3fs, f=%3.2ffps - %4.2fms      ", 
         State->GraphTop, 
         State->GraphLeft, 
         State->GraphWidth, 
@@ -404,7 +350,7 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
 
     int GraphThickness = 3;
     int MajorTickThickness = 3;
-    int MinorTickThickness = 1;
+    int MinorTickThickness = 2;
     int XAxisThickness = 3;
     int YAxisThickness = 3;
 
