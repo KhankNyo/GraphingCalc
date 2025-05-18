@@ -238,7 +238,7 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
             int y = Y;
             for (int i = -Thickness/2; i < Thickness/2 + Thickness % 2; i++)
             {
-                GraphMixColorWithBg(Ctx, x, y + i, Color, RecipFrac(Y));
+                GraphMixColorWithBg(Ctx, x + i, y, Color, RecipFrac(Y));
                 GraphMixColorWithBg(Ctx, x + i, y + 1, Color, Frac(Y));
             }
             Y += Gradient;
