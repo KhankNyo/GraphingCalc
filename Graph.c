@@ -1,8 +1,6 @@
-#include "Include/Platform.h"
+
 #include "Platform.h"
 #include <stdio.h>
-#include <math.h>
-#include <stdlib.h>
 
 #define SWAP(typ, a, b) do {\
     typ t = a;\
@@ -27,6 +25,8 @@
 #define GRAPH_FROM_SCR_X(x) GraphFromScrX(x, State->Scale, State->GraphLeft)
 #define GRAPH_FROM_SCR_Y(y) GraphFromScrX(y, State->Scale, State->GraphTop)
 
+#define ABSI(integer) ((integer) < 0? -(integer) : (integer))
+
 #define MAX(a, b) ((a) > (b)? (a) : (b))
 
 
@@ -39,6 +39,16 @@ static double Fn(double x)
 }
 
 
+
+static double AbsF(double x)
+{
+    union {
+        double d;
+        u64 u;
+    } As = {.d = x};
+    As.u = As.u & ~(1llu << 63);
+    return As.d;
+}
 
 static double Frac(double x)
 {
@@ -127,7 +137,7 @@ static double GraphToScrX(double x, double ScaleInv, double GraphLeft)
 
 static double FloorToMultiple(double x, double Multiple)
 {
-    return floor(x/Multiple) * Multiple;
+    return (i64)(x/Multiple) * Multiple;
 }
 
 
@@ -135,8 +145,8 @@ static double FloorToMultiple(double x, double Multiple)
 
 static void DrawLineBresenham(platform_screen_buffer *Ctx, int x0, int y0, int x1, int y1, int Thickness, u32 Color)
 {
-    int Dx = abs(x1 - x0);
-    int Dy = abs(y1 - y0);
+    int Dx = ABSI(x1 - x0);
+    int Dy = ABSI(y1 - y0);
     if (Dx > Dy) /* the line will be more horizontal */
     {
         if (x0 > x1)
@@ -189,8 +199,8 @@ static void DrawLineBresenham(platform_screen_buffer *Ctx, int x0, int y0, int x
 
 static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
 {
-    double Dy = fabs(y1 - y0);
-    double Dx = fabs(x1 - x0);
+    double Dy = AbsF(y1 - y0);
+    double Dx = AbsF(x1 - x0);
     bool8 MoreVertical = Dy > Dx;
 
     if (MoreVertical)
@@ -204,8 +214,8 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
         SWAP(double, y0, y1);
     }
 
-    Dy = fabs(y1 - y0);
-    Dx = fabs(x1 - x0);
+    Dy = AbsF(y1 - y0);
+    Dx = AbsF(x1 - x0);
     double Gradient = Dx == 0
         ? 1.0 
         : (double)Dy / Dx;
@@ -441,13 +451,14 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     /* y axis */
     for (double i = 0; i < State->GraphHeight + State->Y.MajorTickSpacing; i += State->Y.MajorTickSpacing)
     {
-        double Y = FloorToMultiple(i - (State->GraphHeight - State->GraphTop), State->Y.MajorTickSpacing);
+        double Y = FloorToMultiple(i + GraphBottom, State->Y.MajorTickSpacing);
         /* major tick */
         if (Y != 0.0)
         {
             //GraphDrawLine(State, Ctx, -State->Y.TickLength, Y, State->Y.TickLength, Y, MajorTickThickness, MajorTickColor);
             GraphDrawLine(State, Ctx, State->GraphLeft, Y, GraphRight, Y, MajorTickThickness, MajorTickColor);
         }
+
         /* minor tick */
         for (int k = 1; k <= MinorTickCount; k++)
         {
