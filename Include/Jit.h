@@ -30,6 +30,7 @@ enum jit_token_type
     TOK_RBRACKET,
     TOK_EQUAL,
     TOK_IDENTIFIER,
+    TOK_NEWLINE,
     TOK_EOF,
 };
 
@@ -131,7 +132,7 @@ static token CreateToken(jit *Jit, token_type Type)
     return Tok;
 }
 
-static token TokenError(jit *Jit, const char *Fmt, ...)
+static token ErrorToken(jit *Jit, const char *Fmt, ...)
 {
     token Tok = CreateToken(Jit, TOK_ERR);
     va_list Arg;
@@ -190,12 +191,6 @@ static void ConsumeSpace(jit *Jit)
         {
             Advance(Jit);
         } break;
-        case '\n':
-        {
-            Advance(Jit);
-            Jit->Line++;
-            Jit->Offset = 0;
-        } break;
         case '#': 
         {
             do {
@@ -208,6 +203,15 @@ static void ConsumeSpace(jit *Jit)
 
 Out:
     Jit->Start = Jit->End;
+}
+
+static token NewlineToken(jit *Jit)
+{
+    Jit->Start = Jit->End;
+    token Tok = CreateToken(Jit, TOK_NEWLINE);
+    Jit->Line++;
+    Jit->Offset = 1;
+    return Tok;
 }
 
 static token Jit_Tokenize(jit *Jit)
@@ -239,10 +243,34 @@ static token Jit_Tokenize(jit *Jit)
     case '[': return CreateToken(Jit, TOK_LBRACKET);
     case ']': return CreateToken(Jit, TOK_RBRACKET);
     case '=': return CreateToken(Jit, TOK_RBRACKET);
+    case '\n': return NewlineToken(Jit);
     case '\0': return CreateToken(Jit, TOK_EOF);
-    default: return TokenError(Jit, "Unknown token '%c'.", Ch);
+    default: return ErrorToken(Jit, "Unknown token '%c'.", Ch);
     }
 }
+
+
+
+
+static void ConsumeToken(jit *Jit)
+{
+    Jit->Curr = Jit->Next;
+    Jit->Next = Jit_Tokenize(Jit);
+}
+
+static void Jit_Reset(jit *Jit, const char *Expr)
+{
+    Jit->Start = Expr;
+    Jit->End = Expr;
+    Jit->Line = 1;
+    Jit->Offset = 1;
+    Jit->Result.Valid = false;
+    ConsumeToken(Jit);
+}
+
+
+
+
 
 
 
@@ -254,19 +282,10 @@ jit Jit_Init(void)
 
 jit_result Jit_Evaluate(jit *Jit, const char *Expr)
 {
-    Jit->Start = Expr;
-    Jit->End = Expr;
-    Jit->Line = 1;
-    Jit->Offset = 1;
-    Jit->Result.Valid = false;
-    Jit->Curr = Jit->Next;
-    Jit->Next = Jit_Tokenize(Jit);
-
+    Jit_Reset(Jit, Expr);
     int i = 0;
     do {
-        Jit->Curr = Jit->Next;
-        Jit->Next = Jit_Tokenize(Jit);
-
+        ConsumeToken(Jit);
         printf("%2d: '%.*s' - %d\n", i, Jit->Curr.StrLen, Jit->Curr.Str, Jit->Curr.Type);
         i++;
     } while (Jit->Curr.Type != TOK_EOF);

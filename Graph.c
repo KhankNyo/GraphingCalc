@@ -373,7 +373,7 @@ graph_state Graph_OnEntry(void)
 
 
     jit Jit = Jit_Init();
-    const char *Expr = "1 + 123 * iden ,";
+    const char *Expr = "1 + 1\n23 * iden \n,\n";
     jit_result Result = Jit_Evaluate(&Jit, Expr);
     if (Result.Valid)
     {
