@@ -62,10 +62,11 @@ typedef struct jit
     char ErrMsg[256];
 } jit;
 
-
 jit Jit_Init(void);
 jit_result Jit_Evaluate(jit *Jit, const char *Expr);
 void Jit_Destroy(jit *Jit);
+
+
 
 #endif /* JIT_H */
 

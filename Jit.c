@@ -1,10 +1,14 @@
 #include "Jit.h"
+#include "DefTable.h"
+
+#include <assert.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdarg.h>
 
 typedef struct jit_token token;
 typedef enum jit_token_type token_type;
+typedef struct jit_expression expression;
 
 typedef enum precedence 
 {
@@ -331,6 +335,7 @@ static double Jit_ParseExpr(jit *Jit, precedence Prec)
         default: 
         {
             /* unreachable */
+            assert(false && "UNREACHABLE");
         } break;
         }
     }
@@ -340,12 +345,12 @@ static double Jit_ParseExpr(jit *Jit, precedence Prec)
 
 static void FunctionDecl(jit *Jit, token Identifier)
 {
-    def_table_entry *FunctionDefinition = Define(Jit, Identifier, IDENTYPE_FUNCTION);
-    PushScope(Jit);
+    def_table_entry *FunctionDefinition = DefTable_Define(Jit, Identifier, ENTRY_FUNCTION);
+    def_table Scope = PushScope(Jit);
     {
         /* parameter */
         do {
-            Define(Jit, CurrToken(Jit), IDENTYPE_VARIABLE);
+            Define(Jit, CurrToken(Jit), ENTRY_VARIABLE);
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
@@ -355,12 +360,13 @@ static void FunctionDecl(jit *Jit, token Identifier)
         /* expr */
         FunctionDefinition->Expr = CompileExpr(Jit, PREC_EXPR);
     }
-    PopScope(Jit);
+    PopScope(Jit, &Scope);
+    FunctionDefinition->Scope = Scope;
 }
 
 static void VariableDecl(jit *Jit, token Identifier)
 {
-    def_table_entry *VariableDefinition = Define(Jit, Identifier, IDENTYPE_VARIABLE);
+    def_table_entry *VariableDefinition = DefTable_Define(Jit, Identifier, ENTRY_VARIABLE);
 
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
