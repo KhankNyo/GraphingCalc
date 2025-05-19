@@ -7,7 +7,7 @@ typedef struct jit_result
 {
     bool8 Valid;
     union {
-        char ErrMsg[256];
+        const char *ErrMsg;
         double Number;
     } As;
 } jit_result;
@@ -17,7 +17,7 @@ enum jit_token_type
     TOK_ERR = 0,
     TOK_NUMBER,
     TOK_PLUS,
-    TOK_DASH,
+    TOK_MINUS,
     TOK_SLASH,
     TOK_STAR,
 
@@ -49,14 +49,14 @@ struct jit_token
 
 typedef struct jit 
 {
-    jit_result Result;
-
     const char *Start, *End;
     int Line;
     int Offset;
     uint SafePeekDist;
 
     struct jit_token Curr, Next;
+    bool8 Error;
+    char ErrMsg[256];
 } jit;
 
 
@@ -69,11 +69,25 @@ void Jit_Destroy(jit *Jit);
 
 #ifdef JIT_IMPL
 #include <stdio.h>
+#include <math.h>
 #include <stdarg.h>
-
 
 typedef struct jit_token token;
 typedef enum jit_token_type token_type;
+
+
+
+typedef enum precedence 
+{
+    PREC_NONE = 0,
+    PREC_EXPR, 
+    PREC_PLUSMINUS,
+    PREC_MULDIV,
+    PREC_POW,
+    PREC_UNARY,
+} precedence;
+
+
 
 static bool8 ChInRange(char Lower, char n, char Upper)
 {
@@ -142,13 +156,13 @@ static token ErrorToken(jit *Jit, const char *Fmt, ...)
     return Tok;
 }
 
-static token ParseNumber(jit *Jit)
+static token ParseNumber(jit *Jit, char First)
 {
-    double Number = 0;
+    double Number = First - '0';
     while (IsNumber(Peek(Jit, 0)))
     {
-        Number += Advance(Jit) - '0';
         Number *= 10;
+        Number += Advance(Jit) - '0';
     }
 
     if ('.' == Peek(Jit, 0))
@@ -222,7 +236,7 @@ static token Jit_Tokenize(jit *Jit)
     if (IsNumber(Ch) 
     || ( Peek(Jit, 0) == '.' && IsNumber(Peek(Jit, 1)) ))
     {
-        return ParseNumber(Jit);
+        return ParseNumber(Jit, Ch);
     }
 
     if (IsIdentifier(Ch))
@@ -233,7 +247,7 @@ static token Jit_Tokenize(jit *Jit)
     switch (Ch)
     {
     case '+': return CreateToken(Jit, TOK_PLUS);
-    case '-': return CreateToken(Jit, TOK_DASH);
+    case '-': return CreateToken(Jit, TOK_MINUS);
     case '/': return CreateToken(Jit, TOK_SLASH);
     case '*': return CreateToken(Jit, TOK_STAR);
     case '^': return CreateToken(Jit, TOK_CARET);
@@ -251,12 +265,53 @@ static token Jit_Tokenize(jit *Jit)
 
 
 
+static void ErrorVA(jit *Jit, const char *ErrMsg, va_list Args)
+{
+    if (Jit->Error)
+        return;
 
-static void ConsumeToken(jit *Jit)
+    Jit->Error = true;
+    vsnprintf(Jit->ErrMsg, sizeof Jit->ErrMsg, ErrMsg, Args);
+}
+
+static void Error(jit *Jit, const char *ErrMsg, ...)
+{
+    if (Jit->Error)
+        return;
+
+    va_list Args;
+    va_start(Args, ErrMsg);
+    ErrorVA(Jit, ErrMsg, Args);
+    va_end(Args);
+}
+
+
+static token ConsumeToken(jit *Jit)
 {
     Jit->Curr = Jit->Next;
     Jit->Next = Jit_Tokenize(Jit);
+    return Jit->Curr;
 }
+
+static token PeekToken(jit *Jit)
+{
+    return Jit->Next;
+}
+
+static bool8 ConsumeOrError(jit *Jit, token_type ExpectedType, const char *ErrMsg, ...)
+{
+    if (PeekToken(Jit).Type != ExpectedType)
+    {
+        va_list Args;
+        va_start(Args, ErrMsg);
+        ErrorVA(Jit, ErrMsg, Args);
+        va_end(Args);
+        return false;
+    }
+    ConsumeToken(Jit);
+    return true;
+}
+
 
 static void Jit_Reset(jit *Jit, const char *Expr)
 {
@@ -264,13 +319,81 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->End = Expr;
     Jit->Line = 1;
     Jit->Offset = 1;
-    Jit->Result.Valid = false;
+    Jit->Error = false;
     ConsumeToken(Jit);
 }
 
 
 
+static precedence PrecedenceOf(token_type Operator)
+{
+    switch (Operator)
+    {
+    case TOK_PLUS:
+    case TOK_MINUS:
+        return PREC_PLUSMINUS;
+    case TOK_STAR:
+    case TOK_SLASH:
+        return PREC_MULDIV;
+    case TOK_CARET:
+        return PREC_POW;
+    default: return PREC_NONE;
+    }
+}
 
+static double Jit_ParseExpr(jit *Jit, precedence Prec)
+{
+    if (Jit->Error)
+        return 0;
+
+    double Result = 0;
+    {
+        token Left = ConsumeToken(Jit);
+        switch (Left.Type)
+        {
+        case TOK_PLUS:
+        {
+            Result = Jit_ParseExpr(Jit, PREC_UNARY);
+        } break;
+        case TOK_MINUS:
+        {
+            Result = -Jit_ParseExpr(Jit, PREC_UNARY);
+        } break; 
+        case TOK_NUMBER:
+        {
+            Result = Left.As.Number;
+        } break;
+        case TOK_LPAREN:
+        {
+            Result = Jit_ParseExpr(Jit, PREC_EXPR);
+            ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
+        } break;
+        default:
+        {
+            Error(Jit, "Expected an expression.");
+        } break;
+        }
+    }
+
+    while (PrecedenceOf(PeekToken(Jit).Type) >= Prec)
+    {
+        token_type Oper = ConsumeToken(Jit).Type;
+        double Right = Jit_ParseExpr(Jit, Oper + 1);
+        switch (Oper)
+        {
+        case TOK_PLUS: Result = Result + Right; break;
+        case TOK_MINUS: Result = Result - Right; break;
+        case TOK_STAR: Result = Result * Right; break;
+        case TOK_SLASH: Result = Result / Right; break;
+        case TOK_CARET: Result = pow(Result, Right); break;
+        default: 
+        {
+            /* unreachable */
+        } break;
+        }
+    }
+    return Result;
+}
 
 
 
@@ -283,14 +406,19 @@ jit Jit_Init(void)
 jit_result Jit_Evaluate(jit *Jit, const char *Expr)
 {
     Jit_Reset(Jit, Expr);
-    int i = 0;
-    do {
-        ConsumeToken(Jit);
-        printf("%2d: '%.*s' - %d\n", i, Jit->Curr.StrLen, Jit->Curr.Str, Jit->Curr.Type);
-        i++;
-    } while (Jit->Curr.Type != TOK_EOF);
-    
-    return Jit->Result;
+    double ResultValue = Jit_ParseExpr(Jit, PREC_EXPR);
+    jit_result Result = {
+        .Valid = !Jit->Error,
+    };
+    if (Jit->Error)
+    {
+        Result.As.ErrMsg = Jit->ErrMsg;
+    }
+    else
+    {
+        Result.As.Number = ResultValue;
+    }
+    return Result;
 #if 0
     if (!JitCompile(Jit))
     {
