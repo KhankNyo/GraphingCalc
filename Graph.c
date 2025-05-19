@@ -3,7 +3,6 @@
 
 #include "Common.h"
 #include "Platform.h"
-#define JIT_IMPL
 #include "Jit.h"
 
 #define GRAPH_X(p_ctx, x) (x)
