@@ -14,5 +14,5 @@ if "clean"=="%1" (
     popd
 ) else (
     if not exist bin\ mkdir bin
-    tcc -Wall -Wextra -Wpedantic -IInclude Win32.c -o bin\Graph.exe -lgdi32 -luser32 -lkernel32
+    gcc -ggdb -Wall -Wextra -Wpedantic -IInclude Win32.c -o bin\Graph.exe -lgdi32 -luser32 -lkernel32
 )

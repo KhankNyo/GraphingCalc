@@ -1,14 +1,11 @@
 
-#include "Platform.h"
 #include <stdio.h>
 
-#define SWAP(typ, a, b) do {\
-    typ t = a;\
-    a = b;\
-    b = t;\
-} while (0)
-#define IN_RANGE(lower, n, upper) ((lower) <= (n) && (n) <= (upper))
-#define IN_RANGEX(lower, n, upper) ((lower) < (n) && (n) < (upper))
+#include "Common.h"
+#include "Platform.h"
+#define JIT_IMPL
+#include "Jit.h"
+
 #define GRAPH_X(p_ctx, x) (x)
 #define GRAPH_Y(p_ctx, y) (y)
 #define IDX(p_ctx, x, y) (GRAPH_Y(p_ctx, y)*(p_ctx)->Width + GRAPH_X(p_ctx, x))
@@ -21,17 +18,11 @@
     && IN_RANGE(0, y, (p_ctx)->Height - 1)) \
     ? (p_ctx)->Ptr[IDX(p_ctx, x, y)] : 0)
 
-#define GRAPH_TO_SCR_X(x) GraphToScrX(x, State->ScaleInv, State->GraphLeft)
-#define GRAPH_TO_SCR_Y(y) GraphToScrY(y, State->ScaleInv, State->GraphTop)
-#define GRAPH_FROM_SCR_X(x) GraphFromScrX(x, State->Scale, State->GraphLeft)
-#define GRAPH_FROM_SCR_Y(y) GraphFromScrX(y, State->Scale, State->GraphTop)
+#define GRAPH_TO_SCR_X(x) Graph_ToScrX(x, State->ScaleInv, State->GraphLeft)
+#define GRAPH_TO_SCR_Y(y) Graph_ToScrY(y, State->ScaleInv, State->GraphTop)
+#define GRAPH_FROM_SCR_X(x) Graph_FromScrX(x, State->Scale, State->GraphLeft)
+#define GRAPH_FROM_SCR_Y(y) Graph_FromScrX(y, State->Scale, State->GraphTop)
 
-#define ABSI(integer) ((integer) < 0? -(integer) : (integer))
-
-#define MAX(a, b) ((a) > (b)? (a) : (b))
-
-
-typedef double graph_to_scr_fn(double x, double ScaleInv, double Left);
 
 
 static double Fn(double x)
@@ -39,32 +30,6 @@ static double Fn(double x)
     return x*x;
 }
 
-
-
-static double AbsF(double x)
-{
-    union {
-        double d;
-        u64 u;
-    } As = {.d = x};
-    As.u = As.u & ~(1llu << 63);
-    return As.d;
-}
-
-static double Frac(double x)
-{
-    return x - (i64)x;
-}
-
-static double RecipFrac(double x)
-{
-    return 1 - Frac(x);
-}
-
-static double Round(double x)
-{
-    return (i64)(x + .5);
-}
 
 
 static u32 RGB(u8 r, u8 g, u8 b)
@@ -99,7 +64,7 @@ static u32 RGBMix(u32 A, u32 B, double AlphaA)
 
 
 /* NOTE: Ctx must already initialized with a background color */
-static void GraphMixColorWithBg(platform_screen_buffer *Ctx, int x, int y, u32 Color, double Alpha)
+static void Graph_MixColorWithBg(platform_screen_buffer *Ctx, int x, int y, u32 Color, double Alpha)
 {
     if (!IN_RANGE(0, x, Ctx->Width - 1) 
     || !IN_RANGE(0, y, Ctx->Height - 1))
@@ -116,22 +81,22 @@ static void GraphMixColorWithBg(platform_screen_buffer *Ctx, int x, int y, u32 C
 
 
 
-static double GraphFromScrY(int y, double Scale, double GraphTop)
+static double Graph_FromScrY(int y, double Scale, double GraphTop)
 {
     return -(y * Scale - GraphTop);
 }
 
-static double GraphFromScrX(int x, double Scale, double GraphLeft)
+static double Graph_FromScrX(int x, double Scale, double GraphLeft)
 {
     return x * Scale + GraphLeft;
 }
 
-static double GraphToScrY(double y, double ScaleInv, double GraphTop)
+static double Graph_ToScrY(double y, double ScaleInv, double GraphTop)
 {
     return (-y + GraphTop) * ScaleInv;
 }
 
-static double GraphToScrX(double x, double ScaleInv, double GraphLeft)
+static double Graph_ToScrX(double x, double ScaleInv, double GraphLeft)
 {
     return (x - GraphLeft) * ScaleInv;
 }
@@ -183,8 +148,8 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
             int y = Y;
             for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
             {
-                GraphMixColorWithBg(Ctx, y + VerticalIndex, x + i, Color, RecipFrac(Y));
-                GraphMixColorWithBg(Ctx, y + 1 + VerticalIndex, x + i, Color, Frac(Y));
+                Graph_MixColorWithBg(Ctx, y + VerticalIndex, x + i, Color, RecipFrac(Y));
+                Graph_MixColorWithBg(Ctx, y + 1 + VerticalIndex, x + i, Color, Frac(Y));
             }
             Y += Gradient;
         }
@@ -196,15 +161,15 @@ static void DrawLineXiaolinWu(platform_screen_buffer *Ctx, double x0, double y0,
             int y = Y;
             for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
             {
-                GraphMixColorWithBg(Ctx, x + i, y + VerticalIndex, Color, RecipFrac(Y));
-                GraphMixColorWithBg(Ctx, x + i, y + 1 + VerticalIndex, Color, Frac(Y));
+                Graph_MixColorWithBg(Ctx, x + i, y + VerticalIndex, Color, RecipFrac(Y));
+                Graph_MixColorWithBg(Ctx, x + i, y + 1 + VerticalIndex, Color, Frac(Y));
             }
             Y += Gradient;
         }
     }
 }
 
-static void GraphDrawLine(
+static void Graph_DrawLine(
     const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double x1, double y1, int Thickness, u32 Color)
 {    
     double ScrX0 = GRAPH_TO_SCR_X(x0);
@@ -216,36 +181,36 @@ static void GraphDrawLine(
 
 
 
-static void GraphUpdateScaling(graph_state *State, int CtxWidth)
+static void Graph_UpdateScaling(graph_state *State, int CtxWidth)
 {
     State->Scale = State->GraphWidth / CtxWidth;
     State->ScaleInv = 1.0 / State->Scale;
 }
 
-static void GraphUpdateBackground(graph_state *State, int CtxWidth)
+static void Graph_UpdateBackground(graph_state *State, int CtxWidth)
 {
     int ZoomOutThreshold = CtxWidth/16;
     int ZoomInThreshold = CtxWidth/8;
-    if ((int)GraphToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) > ZoomInThreshold)
+    if ((int)Graph_ToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) > ZoomInThreshold)
     {
         State->Bg.MajorXSpacing /= 2;
     }
-    else if ((int)GraphToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
+    else if ((int)Graph_ToScrX(State->Bg.MajorXSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
     {
         State->Bg.MajorXSpacing *= 2;
     }
 
-    if ((int)GraphToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) > ZoomInThreshold)
+    if ((int)Graph_ToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) > ZoomInThreshold)
     {
         State->Bg.MajorYSpacing /= 2;
     }
-    else if ((int)GraphToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
+    else if ((int)Graph_ToScrX(State->Bg.MajorYSpacing, State->ScaleInv, 0) < ZoomOutThreshold)
     {
         State->Bg.MajorYSpacing *= 2;
     }
 }
 
-static void GraphDrawBackground(const graph_state *State, platform_screen_buffer *Ctx)
+static void Graph_DrawBackground(const graph_state *State, platform_screen_buffer *Ctx)
 {
     double GraphLeft = State->GraphLeft;
     double GraphTop = State->GraphTop;
@@ -289,7 +254,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
             if (MinorX <= GraphLeft || GraphRight <= MinorX)
                 continue;
 
-            GraphDrawLine(
+            Graph_DrawLine(
                 State, Ctx, 
                 MinorX, GraphTop, 
                 MinorX, GraphBottom,
@@ -310,7 +275,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
             if (MinorY <= GraphBottom || GraphTop <= MinorY)
                 continue;
 
-            GraphDrawLine(
+            Graph_DrawLine(
                 State, Ctx, 
                 GraphLeft, MinorY, 
                 GraphRight, MinorY,
@@ -329,7 +294,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
         double MajorX = FloorToMultiple(x, State->Bg.MajorXSpacing);
         if (0 == MajorX || !IN_RANGEX(GraphLeft, MajorX, GraphRight))
             continue;
-        GraphDrawLine(
+        Graph_DrawLine(
             State, Ctx, 
             MajorX, GraphTop, 
             MajorX, GraphBottom,
@@ -346,7 +311,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
 
         if (0 == MajorY || !IN_RANGEX(GraphLeft, MajorY, GraphRight))
             continue;
-        GraphDrawLine(
+        Graph_DrawLine(
             State, Ctx, 
             GraphLeft, MajorY, 
             GraphRight, MajorY,
@@ -356,7 +321,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
     }
     /* Main axes */
     /* x */
-    GraphDrawLine(
+    Graph_DrawLine(
         State, Ctx, 
         0, GraphTop, 
         0, GraphBottom,
@@ -364,7 +329,7 @@ static void GraphDrawBackground(const graph_state *State, platform_screen_buffer
         MainAxisColor
     );
     /* y */
-    GraphDrawLine(
+    Graph_DrawLine(
         State, Ctx, 
         GraphLeft, 0, 
         GraphRight, 0, 
@@ -404,7 +369,22 @@ graph_state Graph_OnEntry(void)
             .MainAxisThickness = 3,
         },
     };
-    GraphUpdateScaling(&State, ScrWidth);
+    Graph_UpdateScaling(&State, ScrWidth);
+
+
+    jit Jit = Jit_Init();
+    const char *Expr = "1 + 123 * iden ,";
+    jit_result Result = Jit_Evaluate(&Jit, Expr);
+    if (Result.Valid)
+    {
+        printf("Result: %f\n", Result.As.Number);
+    }
+    else
+    {
+        printf("Error: %s", Result.As.ErrMsg);
+    }
+    Jit_Destroy(&Jit);
+
     return State;
 }
 
@@ -447,8 +427,8 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
         int MouseY = Mouse->Status.Move.Y;
         if (Mouse->Status.Move.LButton)
         {
-            double Dx = GraphFromScrX(MouseX - State->PrevMouseX, State->GraphWidth / Win.Width, 0);
-            double Dy = GraphFromScrY(MouseY - State->PrevMouseY, State->GraphHeight / Win.Height, 0);
+            double Dx = Graph_FromScrX(MouseX - State->PrevMouseX, State->GraphWidth / Win.Width, 0);
+            double Dy = Graph_FromScrY(MouseY - State->PrevMouseY, State->GraphHeight / Win.Height, 0);
             /* mouse direction is opposite that of the top left point of the graph */
             State->GraphLeft -= Dx; 
             State->GraphTop -= Dy;
@@ -464,8 +444,8 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
             ? 1.05
             : 1/1.05;
 
-        double MouseX = GraphFromScrX(State->PrevMouseX, (double)State->GraphWidth / Win.Width, State->GraphLeft);
-        double MouseY = GraphFromScrY(State->PrevMouseY, (double)State->GraphHeight / Win.Height, State->GraphTop);
+        double MouseX = Graph_FromScrX(State->PrevMouseX, (double)State->GraphWidth / Win.Width, State->GraphLeft);
+        double MouseY = Graph_FromScrY(State->PrevMouseY, (double)State->GraphHeight / Win.Height, State->GraphTop);
 
         double ScaledLeft = (State->GraphLeft - MouseX) * ZoomScale + MouseX;
         double ScaledTop = (State->GraphTop - MouseY) * ZoomScale + MouseY;
@@ -484,8 +464,8 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
 void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
 {   
     int Width = Ctx->Width;
-    GraphUpdateScaling(State, Width);
-    GraphUpdateBackground(State, Width);
+    Graph_UpdateScaling(State, Width);
+    Graph_UpdateBackground(State, Width);
 
     double GraphLeft = State->GraphLeft;
     double GraphTop = State->GraphTop;
@@ -494,7 +474,7 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     u32 GraphColor = RGB(0xFF, 0x80, 0x00);
     int GraphThickness = 3;
 
-    GraphDrawBackground(State, Ctx);
+    Graph_DrawBackground(State, Ctx);
 
 
     /* function graph */
@@ -507,7 +487,7 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
         if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
         || IN_RANGE(GraphBottom, Y, GraphTop))
         {
-            GraphDrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColor);
+            Graph_DrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColor);
         }
         PrevX = X;
         PrevY = Y;

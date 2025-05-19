@@ -23,6 +23,8 @@ typedef int32_t i32;
 typedef int16_t i16;
 typedef uint8_t u8;
 
+typedef unsigned uint;
+
 
 
 static inline double AbsF(double x)
@@ -48,6 +50,11 @@ static inline double RecipFrac(double x)
 static inline double Round(double x)
 {
     return (i64)(x + .5);
+}
+
+static inline char Lowercase(char Ch)
+{
+    return Ch | 0x20;
 }
 
 
