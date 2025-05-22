@@ -2,6 +2,8 @@
 #define JIT_H
 
 #include "Common.h"
+#include "JitCommon.h"
+#include "DefTable.h"
 
 typedef struct jit_result
 {
@@ -12,50 +14,17 @@ typedef struct jit_result
     } As;
 } jit_result;
 
-enum jit_token_type 
-{
-    TOK_ERR = 0,
-    TOK_NUMBER,
-    TOK_PLUS,
-    TOK_MINUS,
-    TOK_SLASH,
-    TOK_STAR,
-
-    TOK_CARET,
-    TOK_PERCENT,
-    TOK_LPAREN,
-    TOK_RPAREN,
-    TOK_LBRACKET,
-
-    TOK_RBRACKET,
-    TOK_EQUAL,
-    TOK_IDENTIFIER,
-    TOK_NEWLINE,
-    TOK_COMMA, 
-
-    TOK_EOF,
-};
-
-
-struct jit_token 
-{
-    enum jit_token_type Type;
-    int Offset, Line;
-    int StrLen;
-    const char *Str;
-
-    union {
-        double Number;
-        char ErrMsg[256];
-    } As;
-};
-
 typedef struct jit 
 {
     const char *Start, *End;
     int Line;
     int Offset;
     uint SafePeekDist;
+
+    int FunctionScopeCount, FunctionScopeCapacity;
+    def_table FunctionScopes[256];
+    def_table GlobalScope;
+    def_table *Scope;
 
     struct jit_token Curr, Next;
     bool8 Error;

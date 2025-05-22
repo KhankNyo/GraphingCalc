@@ -12,6 +12,7 @@
 #define IN_RANGEX(lower, n, upper) ((lower) < (n) && (n) < (upper))
 #define ABSI(integer) ((integer) < 0? -(integer) : (integer))
 #define MAX(a, b) ((a) > (b)? (a) : (b))
+#define STATIC_ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
 #define true 1
 #define false 0

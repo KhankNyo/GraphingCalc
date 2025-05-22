@@ -268,6 +268,8 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->Line = 1;
     Jit->Offset = 1;
     Jit->Error = false;
+    Jit->FunctionScopeCount = 0;
+    Jit->FunctionScopeCapacity = STATIC_ARRAY_SIZE(Jit->FunctionScopes);
     ConsumeToken(Jit);
 }
 
@@ -343,36 +345,54 @@ static double Jit_ParseExpr(jit *Jit, precedence Prec)
 }
 
 
-static void FunctionDecl(jit *Jit, token Identifier)
+
+
+static def_table *FunctionScopeBegin(jit *Jit)
 {
-    def_table_entry *FunctionDefinition = DefTable_Define(Jit, Identifier, ENTRY_FUNCTION);
-    def_table Scope = PushScope(Jit);
+    assert(
+        Jit->FunctionScopeCount < Jit->FunctionScopeCapacity 
+        && "TODO: more functions"
+    );
+    Jit->Scope = &Jit->FunctionScopes[Jit->FunctionScopeCount++];
+    return Jit->Scope;
+}
+
+static void FunctionScopeEnd(jit *Jit)
+{
+    Jit->Scope = &Jit->GlobalScope;
+}
+
+static void FunctionDecl(jit *Jit, token FnName)
+{
+    def_table_entry *Function = DefTable_Define(&Jit->GlobalScope, FnName.Str, FnName.StrLen);
+    Function->Scope = FunctionScopeBegin(Jit);
     {
         /* parameter */
         do {
-            Define(Jit, CurrToken(Jit), ENTRY_VARIABLE);
+            token Parameter = CurrToken(Jit);
+            DefTable_Define(Function->Scope, Parameter.Str, Parameter.StrLen);
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
         /* equ sign */
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
-        /* expr */
-        FunctionDefinition->Expr = CompileExpr(Jit, PREC_EXPR);
+        /* function body */
+        //Function->Body = CompileExpr(Jit, PREC_EXPR);
     }
-    PopScope(Jit, &Scope);
-    FunctionDefinition->Scope = Scope;
+    FunctionScopeEnd(Jit);
 }
 
 static void VariableDecl(jit *Jit, token Identifier)
 {
-    def_table_entry *VariableDefinition = DefTable_Define(Jit, Identifier, ENTRY_VARIABLE);
+
+    def_table_entry *VariableDefinition = DefTable_Define(&Jit->GlobalScope, Identifier.Str, Identifier.StrLen);
 
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
     /* expr */
-    VariableDefinition->Expr = CompileExpr(Jit, PREC_EXPR);
+    //VariableDefinition->Expr = CompileExpr(Jit, PREC_EXPR);
 }
 
 
