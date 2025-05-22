@@ -1,9 +1,6 @@
 
 #include "Platform.h"
 
-#include "Jit.c"
-#include "Graph.c"
-
 #include <stdio.h>
 #include <stdarg.h>
 #include <windows.h>

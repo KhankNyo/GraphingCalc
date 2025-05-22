@@ -8,11 +8,11 @@ if "clean"=="%1" (
 
     if not exist bin\ mkdir bin
     pushd bin
-        cl /source-charset:utf-8 /Zi -I..\Include ..\Win32.c -o Graph.exe ^
+        cl /source-charset:utf-8 /Zi -I..\Include ..\Build.c -o Graph.exe ^
             gdi32.lib user32.lib^
             /link /subsystem:windows
     popd
 ) else (
     if not exist bin\ mkdir bin
-    gcc -ggdb -Wall -Wextra -Wpedantic -IInclude Win32.c -o bin\Graph.exe -lgdi32 -luser32 -lkernel32
+    gcc -ggdb -Wall -Wextra -Wpedantic -IInclude Build.c -o bin\Graph.exe -lgdi32 -luser32 -lkernel32
 )
