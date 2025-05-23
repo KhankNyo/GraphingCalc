@@ -21,10 +21,10 @@ typedef struct jit
     int Offset;
     uint SafePeekDist;
 
-    int FunctionScopeCount, FunctionScopeCapacity;
-    def_table FunctionScopes[256];
-    def_table GlobalScope;
-    def_table *Scope;
+    int LocalVarCount, LocalVarCapacity;
+    jit_variable LocalVars[256*4];
+    int ScopeCount;
+    def_table Global;
 
     struct jit_token Curr, Next;
     bool8 Error;

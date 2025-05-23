@@ -1,23 +1,20 @@
 #ifndef JIT_COMMON_H
 #define JIT_COMMON_H
 
+#include "Common.h"
 
+typedef struct jit_token jit_token;
 typedef struct jit_expression jit_expression;
+typedef struct jit_function_parameter jit_function_parameter;
+typedef struct jit_variable jit_variable;
+typedef struct jit_function jit_function;
 
 typedef enum jit_expression_type 
 {
     EXPR_CONST,
 } jit_expression_type;
 
-struct jit_expression
-{
-    jit_expression_type Type;
-    union {
-        double Number;
-    } As;
-};
-
-enum jit_token_type 
+typedef enum jit_token_type 
 {
     TOK_ERR = 0,
     TOK_NUMBER,
@@ -39,21 +36,43 @@ enum jit_token_type
     TOK_COMMA, 
 
     TOK_EOF,
+} jit_token_type;
+
+struct jit_expression
+{
+    jit_expression_type Type;
+    union {
+        double Number;
+    } As;
 };
 
+struct jit_variable
+{
+    strview Str;
+    int Offset;
+    jit_expression Expr;
+};
+
+struct jit_function 
+{
+    strview Str;
+    int ParamStart;
+    int ParamCount;
+    jit_expression Body;
+};
 
 struct jit_token 
 {
-    enum jit_token_type Type;
+    strview Str;
     int Offset, Line;
-    int StrLen;
-    const char *Str;
+    enum jit_token_type Type;
 
     union {
         double Number;
         char ErrMsg[256];
     } As;
 };
+
 
 #endif /* JIT_COMMON_H */
 

@@ -371,7 +371,11 @@ graph_state Graph_OnEntry(void)
     Graph_UpdateScaling(&State, ScrWidth);
 
     jit Jit = Jit_Init();
-    const char *Expr = "(1 + 1) * -2";
+    const char *Expr = 
+        "f() = 2\n"
+        "g() = 3\n"
+        "n = 4\n"
+        "1 + 3*n + f()*g()\n";
     jit_result Result = Jit_Evaluate(&Jit, Expr);
     if (Result.Valid)
     {

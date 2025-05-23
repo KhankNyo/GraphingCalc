@@ -26,6 +26,11 @@ typedef uint8_t u8;
 
 typedef unsigned uint;
 
+typedef struct strview 
+{
+    const char *Ptr;
+    int Len;
+} strview;
 
 
 static inline double AbsF(double x)

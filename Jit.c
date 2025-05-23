@@ -6,9 +6,6 @@
 #include <math.h>
 #include <stdarg.h>
 
-typedef struct jit_token token;
-typedef enum jit_token_type token_type;
-typedef struct jit_expression expression;
 
 typedef enum precedence 
 {
@@ -20,7 +17,7 @@ typedef enum precedence
     PREC_UNARY,
 } precedence;
 
-static void Jit_ParseExpr(jit *Jit, precedence Prec);
+static bool8 Jit_ParseExpr(jit *Jit, precedence Prec);
 
 
 static bool8 ChInRange(char Lower, char n, char Upper)
@@ -67,22 +64,24 @@ static char Advance(jit *Jit)
     return '\0';
 }
 
-static token CreateToken(jit *Jit, token_type Type)
+static jit_token CreateToken(jit *Jit, jit_token_type Type)
 {
-    token Tok = {
+    jit_token Tok = {
         .Type = Type,
         .Line = Jit->Line,
         .Offset = Jit->Offset, 
-        .Str = Jit->Start,
-        .StrLen = Jit->End - Jit->Start,
+        .Str = {
+            .Ptr = Jit->Start,
+            .Len = Jit->End - Jit->Start,
+        },
     };
     Jit->Start = Jit->End;
     return Tok;
 }
 
-static token ErrorToken(jit *Jit, const char *Fmt, ...)
+static jit_token ErrorToken(jit *Jit, const char *Fmt, ...)
 {
-    token Tok = CreateToken(Jit, TOK_ERR);
+    jit_token Tok = CreateToken(Jit, TOK_ERR);
     va_list Arg;
     va_start(Arg, Fmt);
     vsnprintf(Tok.As.ErrMsg, sizeof Tok.As.ErrMsg, Fmt, Arg);
@@ -90,7 +89,7 @@ static token ErrorToken(jit *Jit, const char *Fmt, ...)
     return Tok;
 }
 
-static token ParseNumber(jit *Jit, char First)
+static jit_token ParseNumber(jit *Jit, char First)
 {
     double Number = First - '0';
     while (IsNumber(Peek(Jit, 0)))
@@ -112,12 +111,12 @@ static token ParseNumber(jit *Jit, char First)
         }
         Number += Decimal / Pow10;
     }
-    token Tok = CreateToken(Jit, TOK_NUMBER);
+    jit_token Tok = CreateToken(Jit, TOK_NUMBER);
     Tok.As.Number = Number;
     return Tok;
 }
 
-static token ParseIdentifier(jit *Jit)
+static jit_token ParseIdentifier(jit *Jit)
 {
     while (IsIdentifier(Peek(Jit, 0)))
     {
@@ -153,16 +152,16 @@ Out:
     Jit->Start = Jit->End;
 }
 
-static token NewlineToken(jit *Jit)
+static jit_token NewlineToken(jit *Jit)
 {
     Jit->Start = Jit->End;
-    token Tok = CreateToken(Jit, TOK_NEWLINE);
+    jit_token Tok = CreateToken(Jit, TOK_NEWLINE);
     Jit->Line++;
     Jit->Offset = 1;
     return Tok;
 }
 
-static token Jit_Tokenize(jit *Jit)
+static jit_token Jit_Tokenize(jit *Jit)
 {
     ConsumeSpace(Jit);
     char Ch = Advance(Jit);
@@ -190,10 +189,10 @@ static token Jit_Tokenize(jit *Jit)
     case ')': return CreateToken(Jit, TOK_RPAREN);
     case '[': return CreateToken(Jit, TOK_LBRACKET);
     case ']': return CreateToken(Jit, TOK_RBRACKET);
-    case '=': return CreateToken(Jit, TOK_RBRACKET);
+    case '=': return CreateToken(Jit, TOK_EQUAL);
     case '\n': return NewlineToken(Jit);
     case '\0': return CreateToken(Jit, TOK_EOF);
-    default: return ErrorToken(Jit, "Unknown token '%c'.", Ch);
+    default: return ErrorToken(Jit, "Unknown jit_token '%c'.", Ch);
     }
 }
 
@@ -220,24 +219,24 @@ static void Error(jit *Jit, const char *ErrMsg, ...)
 }
 
 
-static token ConsumeToken(jit *Jit)
+static jit_token ConsumeToken(jit *Jit)
 {
     Jit->Curr = Jit->Next;
     Jit->Next = Jit_Tokenize(Jit);
     return Jit->Curr;
 }
 
-static token CurrToken(const jit *Jit)
+static jit_token CurrToken(const jit *Jit)
 {
     return Jit->Curr;
 }
 
-static token NextToken(const jit *Jit)
+static jit_token NextToken(const jit *Jit)
 {
     return Jit->Next;
 }
 
-static bool8 ConsumeIfNextTokenIs(jit *Jit, token_type ExpectedToken)
+static bool8 ConsumeIfNextTokenIs(jit *Jit, jit_token_type ExpectedToken)
 {
     if (NextToken(Jit).Type == ExpectedToken)
     {
@@ -248,7 +247,7 @@ static bool8 ConsumeIfNextTokenIs(jit *Jit, token_type ExpectedToken)
 }
 
 
-static bool8 ConsumeOrError(jit *Jit, token_type ExpectedType, const char *ErrMsg, ...)
+static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *ErrMsg, ...)
 {
     if (NextToken(Jit).Type != ExpectedType)
     {
@@ -270,8 +269,8 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->Line = 1;
     Jit->Offset = 1;
     Jit->Error = false;
-    Jit->FunctionScopeCount = 0;
-    Jit->FunctionScopeCapacity = STATIC_ARRAY_SIZE(Jit->FunctionScopes);
+    Jit->LocalVarCount = 0;
+    Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
     ConsumeToken(Jit);
@@ -283,21 +282,18 @@ static void Jit_Reset(jit *Jit, const char *Expr)
 
 static jit_expression *Expr_Peek(jit *Jit)
 {
-    printf("Peek\n");
     assert(Jit->ExprStackSize > 0 && "Expr_Peek");
     return &Jit->ExprStack[Jit->ExprStackSize - 1];
 }
 
 static jit_expression *Expr_Pop(jit *Jit)
 {
-    printf("Pop\n");
     assert(Jit->ExprStackSize > 0 && "Expr_Pop");
     return &Jit->ExprStack[--Jit->ExprStackSize];
 }
 
 static void Expr_Push(jit *Jit, const jit_expression *E)
 {
-    printf("Push\n");
     assert(Jit->ExprStackSize < Jit->ExprStackCapacity && "Expr_Push");
     Jit->ExprStack[Jit->ExprStackSize++] = *E;
 }
@@ -326,9 +322,12 @@ static void Expr_Neg(jit *Jit)
 
 #define DEFINE_EXPR_BINARY(name, op)\
 static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) {\
+    (void)Jit;\
     jit_expression Result = { .Type = EXPR_CONST, };\
     if (Left->Type == EXPR_CONST && Right->Type == EXPR_CONST) {\
         Result.As.Number = Left->As.Number op Right->As.Number;\
+    } else {\
+        assert(false && "non const expr.");\
     }\
     return Result;\
 }\
@@ -341,19 +340,96 @@ DEFINE_EXPR_BINARY(Div, /);
 
 #undef DEFINE_EXPR_BINARY
 
-
-static void Jit_ParseUnary(jit *Jit)
+static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
 {
-    token Left = ConsumeToken(Jit);
+    /* consumed '(' */
+
+    /* find the function */
+    def_table_entry *Entry = DefTable_Find(&Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION);
+    if (!Entry)
+    {
+        Error(Jit, "Call to undefined function: '%.*s'.", FnName->Str.Len, FnName->Str.Ptr);
+        goto ErrReturn;
+    }
+    jit_function *Function = &Entry->As.Function;
+
+    /* parse args */
+    int ArgCount = 0;
+    if (NextToken(Jit).Type != TOK_RPAREN)
+    {
+        do {
+            Jit_ParseExpr(Jit, PREC_EXPR);
+        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+    }
+    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument%s.", 
+        ArgCount > 1? "s" : ""
+    );
+
+    if (ArgCount != Function->ParamCount)
+    {
+        Error(Jit, "Expected %d arguments to '%.*s', got %d instead.", 
+            Function->ParamCount, FnName->Str.Len, FnName->Str.Ptr, ArgCount
+        );
+        goto ErrReturn;
+    }
+
+    /* call the function */
+    jit_expression Result = { .Type = EXPR_CONST, };
+    if (Function->Body.Type == EXPR_CONST)
+    {
+        Result = Function->Body;
+    }
+    else
+    {
+        assert(false && "TODO: non-const call.");
+    }
+    return Result;
+ErrReturn:
+    return (jit_expression) { 0 };
+}
+
+static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
+{
+    /* consumed VarName */
+    /* find the variable */
+    def_table_entry *Entry = DefTable_Find(&Jit->Global, VarName->Str.Ptr, VarName->Str.Len, TYPE_VARIABLE);
+    if (!Entry)
+    {
+        Error(Jit, "Undefined variable: '%.*s'.", VarName->Str.Len, VarName->Str.Ptr);
+        goto ErrReturn;
+    }
+    jit_variable *Variable = &Entry->As.Variable;
+
+    /* get the value */
+    jit_expression Result = { .Type = EXPR_CONST };
+    if (Variable->Expr.Type == EXPR_CONST)
+    {
+        Result.As.Number = Variable->Expr.As.Number;
+    }
+    else
+    {
+        assert(false && "TODO: non-const variable.");
+    }
+    return Result;
+ErrReturn:
+    return (jit_expression) { 0 };
+}
+
+
+static bool8 Jit_ParseUnary(jit *Jit)
+{
+    jit_token Left = ConsumeToken(Jit);
     switch (Left.Type)
     {
     case TOK_PLUS:
     {
-        Jit_ParseUnary(Jit);
-    } break;
+        return Jit_ParseUnary(Jit);
+    }
     case TOK_MINUS:
     {
-        Jit_ParseUnary(Jit);
+        if (!Jit_ParseUnary(Jit))
+            return !Jit->Error;
+
         Expr_Neg(Jit);
     } break; 
     case TOK_NUMBER:
@@ -365,14 +441,31 @@ static void Jit_ParseUnary(jit *Jit)
         Jit_ParseExpr(Jit, PREC_EXPR);
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
     } break;
+    case TOK_IDENTIFIER:
+    {
+        jit_expression Result;
+        /* function call */
+        if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
+        {
+            Result = Expr_Call(Jit, &Left);
+        }
+        /* variable reference */
+        else
+        {
+            Result = Expr_Variable(Jit, &Left);
+        }
+        Expr_Push(Jit, &Result);
+    } break;
     default:
     {
         Error(Jit, "Expected an expression.");
     } break;
     }
+
+    return !Jit->Error;
 }
 
-static precedence PrecedenceOf(token_type Operator)
+static precedence PrecedenceOf(jit_token_type Operator)
 {
     switch (Operator)
     {
@@ -388,13 +481,16 @@ static precedence PrecedenceOf(token_type Operator)
     }
 }
 
-static void Jit_ParseExpr(jit *Jit, precedence Prec)
+static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
 {
-    Jit_ParseUnary(Jit);
+    bool8 Error = !Jit_ParseUnary(Jit);
     while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
     {
-        token_type Oper = ConsumeToken(Jit).Type;
-        Jit_ParseExpr(Jit, Oper + 1);
+        jit_token_type Oper = ConsumeToken(Jit).Type;
+        Error = Error || !Jit_ParseExpr(Jit, Oper + 1);
+        if (Error)
+            continue;
+
         jit_expression *Right = Expr_Pop(Jit);
         jit_expression *Left = Expr_Peek(Jit);
         jit_expression *Result = Left;
@@ -415,57 +511,87 @@ static void Jit_ParseExpr(jit *Jit, precedence Prec)
         } break;
         }
     }
+    return !Error && !Jit->Error;
 }
 
 
 
 
-static def_table *FunctionScopeBegin(jit *Jit)
+static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
 {
-    assert(
-        Jit->FunctionScopeCount < Jit->FunctionScopeCapacity 
-        && "TODO: more functions"
-    );
-    Jit->Scope = &Jit->FunctionScopes[Jit->FunctionScopeCount++];
-    return Jit->Scope;
+    assert(Jit->LocalVarCount < Jit->LocalVarCapacity && "TODO: Dynamic capacity.");
+    Function->ParamStart = Jit->LocalVarCount;
+    Function->ParamCount = 0;
+    Jit->ScopeCount++;
 }
 
-static void FunctionScopeEnd(jit *Jit)
+static void Jit_FunctionEndScope(jit *Jit)
 {
-    Jit->Scope = &Jit->GlobalScope;
+    Jit->ScopeCount--;
 }
 
-static void FunctionDecl(jit *Jit, token FnName)
+static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_token *Parameter)
 {
-    def_table_entry *Function = DefTable_Define(&Jit->GlobalScope, FnName.Str, FnName.StrLen);
-    Function->Scope = FunctionScopeBegin(Jit);
+    assert(Jit->LocalVarCount + 1 < Jit->LocalVarCapacity && "TODO: Dynamic capacity.");
+    Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
+        .Str = Parameter->Str,
+        .Offset = Function->ParamCount,
+    };
+    Jit->LocalVarCount++;
+    Function->ParamCount++;
+}
+
+static void Jit_PushGlobal(jit *Jit, jit_variable *Global)
+{
+    Global->Offset = Jit->Global.Count - 1;
+}
+
+
+
+static void FunctionDecl(jit *Jit, jit_token FnName)
+{
+    /* consumed '(' */
+
+    def_table_entry *Label = DefTable_Define(&Jit->Global, FnName.Str.Ptr, FnName.Str.Len, TYPE_FUNCTION);
+    Jit_FunctionBeginScope(Jit, &Label->As.Function);
     {
         /* parameter */
-        do {
-            token Parameter = CurrToken(Jit);
-            DefTable_Define(Function->Scope, Parameter.Str, Parameter.StrLen);
-        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+        if (NextToken(Jit).Type == TOK_IDENTIFIER)
+        {
+            do {
+                jit_token Parameter = ConsumeToken(Jit);
+                Jit_FunctionPushLocal(Jit, &Label->As.Function, &Parameter);
+            } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+        }
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
         /* equ sign */
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
         /* function body */
-        //Function->Body = CompileExpr(Jit, PREC_EXPR);
+        if (Jit_ParseExpr(Jit, PREC_EXPR))
+        {
+            Label->As.Function.Body = *Expr_Pop(Jit);
+        }
     }
-    FunctionScopeEnd(Jit);
+    Jit_FunctionEndScope(Jit);
 }
 
-static void VariableDecl(jit *Jit, token Identifier)
+static void VariableDecl(jit *Jit, jit_token Identifier)
 {
+    /* consumed Identifier */
 
-    def_table_entry *VariableDefinition = DefTable_Define(&Jit->GlobalScope, Identifier.Str, Identifier.StrLen);
+    def_table_entry *Definition = DefTable_Define(&Jit->Global, Identifier.Str.Ptr, Identifier.Str.Len, TYPE_VARIABLE);
+    Jit_PushGlobal(Jit, &Definition->As.Variable);
 
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
     /* expr */
-    //VariableDefinition->Expr = CompileExpr(Jit, PREC_EXPR);
+    if (Jit_ParseExpr(Jit, PREC_EXPR))
+    {
+        Definition->As.Variable.Expr = *Expr_Pop(Jit);
+    }
 }
 
 
@@ -483,7 +609,7 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
         /* declaration */
         if (ConsumeIfNextTokenIs(Jit, TOK_IDENTIFIER))
         {
-            token Identifier = CurrToken(Jit);
+            jit_token Identifier = CurrToken(Jit);
             if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
             {
                 FunctionDecl(Jit, Identifier);
@@ -501,10 +627,7 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
         {
             Jit_ParseExpr(Jit, PREC_EXPR);
             printf("Stack: %d/%d, value = %3.2f\n", Jit->ExprStackSize, Jit->ExprStackCapacity, Jit->ExprStack[0].As.Number);
-            return (jit_result) {
-                .Valid = !Jit->Error,
-                .As.Number = Jit->ExprStack[0].As.Number,
-            };
+            goto Done;
         }
 
         if (!ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
@@ -512,10 +635,21 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
             ConsumeOrError(Jit, TOK_EOF, "Expected new line.");
         }
     }
-    return (jit_result) {
-        .Valid = !Jit->Error,
-        .As.Number = 0,
-    };
+Done:
+    if (Jit->Error)
+    {
+        return (jit_result) {
+            .Valid = false,
+            .As.ErrMsg = Jit->ErrMsg,
+        };
+    }
+    else
+    {
+        return (jit_result) {
+            .Valid = true,
+            .As.Number = Jit->ExprStack[0].As.Number,
+        };
+    }
 #if 0
     if (!JitCompile(Jit))
     {
