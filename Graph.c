@@ -370,9 +370,8 @@ graph_state Graph_OnEntry(void)
     };
     Graph_UpdateScaling(&State, ScrWidth);
 
-
     jit Jit = Jit_Init();
-    const char *Expr = "(-2 + -1)*2";
+    const char *Expr = "(1 + 1) * -2";
     jit_result Result = Jit_Evaluate(&Jit, Expr);
     if (Result.Valid)
     {

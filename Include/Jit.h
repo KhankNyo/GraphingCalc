@@ -29,6 +29,9 @@ typedef struct jit
     struct jit_token Curr, Next;
     bool8 Error;
     char ErrMsg[256];
+
+    jit_expression ExprStack[128];
+    int ExprStackSize, ExprStackCapacity;
 } jit;
 
 jit Jit_Init(void);

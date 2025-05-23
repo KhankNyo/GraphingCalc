@@ -20,6 +20,8 @@ typedef enum precedence
     PREC_UNARY,
 } precedence;
 
+static void Jit_ParseExpr(jit *Jit, precedence Prec);
+
 
 static bool8 ChInRange(char Lower, char n, char Upper)
 {
@@ -270,10 +272,105 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->Error = false;
     Jit->FunctionScopeCount = 0;
     Jit->FunctionScopeCapacity = STATIC_ARRAY_SIZE(Jit->FunctionScopes);
+    Jit->ExprStackSize = 0;
+    Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
     ConsumeToken(Jit);
 }
 
 
+
+
+
+static jit_expression *Expr_Peek(jit *Jit)
+{
+    printf("Peek\n");
+    assert(Jit->ExprStackSize > 0 && "Expr_Peek");
+    return &Jit->ExprStack[Jit->ExprStackSize - 1];
+}
+
+static jit_expression *Expr_Pop(jit *Jit)
+{
+    printf("Pop\n");
+    assert(Jit->ExprStackSize > 0 && "Expr_Pop");
+    return &Jit->ExprStack[--Jit->ExprStackSize];
+}
+
+static void Expr_Push(jit *Jit, const jit_expression *E)
+{
+    printf("Push\n");
+    assert(Jit->ExprStackSize < Jit->ExprStackCapacity && "Expr_Push");
+    Jit->ExprStack[Jit->ExprStackSize++] = *E;
+}
+
+
+static void Expr_PushNumber(jit *Jit, double Number)
+{
+    jit_expression Expr = {
+        .Type = EXPR_CONST,
+        .As.Number = Number,
+    };
+    Expr_Push(Jit, &Expr);
+}
+
+static void Expr_Neg(jit *Jit)
+{
+    jit_expression *E = Expr_Peek(Jit);
+    switch (E->Type)
+    {
+    case EXPR_CONST:
+    {
+        E->As.Number = -E->As.Number;
+    } break;
+    }
+}
+
+#define DEFINE_EXPR_BINARY(name, op)\
+static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) {\
+    jit_expression Result = { .Type = EXPR_CONST, };\
+    if (Left->Type == EXPR_CONST && Right->Type == EXPR_CONST) {\
+        Result.As.Number = Left->As.Number op Right->As.Number;\
+    }\
+    return Result;\
+}\
+static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) 
+
+DEFINE_EXPR_BINARY(Add, +);
+DEFINE_EXPR_BINARY(Sub, -);
+DEFINE_EXPR_BINARY(Mul, *);
+DEFINE_EXPR_BINARY(Div, /);
+
+#undef DEFINE_EXPR_BINARY
+
+
+static void Jit_ParseUnary(jit *Jit)
+{
+    token Left = ConsumeToken(Jit);
+    switch (Left.Type)
+    {
+    case TOK_PLUS:
+    {
+        Jit_ParseUnary(Jit);
+    } break;
+    case TOK_MINUS:
+    {
+        Jit_ParseUnary(Jit);
+        Expr_Neg(Jit);
+    } break; 
+    case TOK_NUMBER:
+    {
+        Expr_PushNumber(Jit, Left.As.Number);
+    } break;
+    case TOK_LPAREN:
+    {
+        Jit_ParseExpr(Jit, PREC_EXPR);
+        ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
+    } break;
+    default:
+    {
+        Error(Jit, "Expected an expression.");
+    } break;
+    }
+}
 
 static precedence PrecedenceOf(token_type Operator)
 {
@@ -291,49 +388,26 @@ static precedence PrecedenceOf(token_type Operator)
     }
 }
 
-static double Jit_ParseExpr(jit *Jit, precedence Prec)
+static void Jit_ParseExpr(jit *Jit, precedence Prec)
 {
-    if (Jit->Error)
-        return 0;
-
-    double Result = 0;
-    token Left = ConsumeToken(Jit);
-    switch (Left.Type)
-    {
-    case TOK_PLUS:
-    {
-        Result = Jit_ParseExpr(Jit, PREC_UNARY);
-    } break;
-    case TOK_MINUS:
-    {
-        Result = -Jit_ParseExpr(Jit, PREC_UNARY);
-    } break; 
-    case TOK_NUMBER:
-    {
-        Result = Left.As.Number;
-    } break;
-    case TOK_LPAREN:
-    {
-        Result = Jit_ParseExpr(Jit, PREC_EXPR);
-        ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
-    } break;
-    default:
-    {
-        Error(Jit, "Expected an expression.");
-    } break;
-    }
-
+    Jit_ParseUnary(Jit);
     while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
     {
         token_type Oper = ConsumeToken(Jit).Type;
-        double Right = Jit_ParseExpr(Jit, Oper + 1);
+        Jit_ParseExpr(Jit, Oper + 1);
+        jit_expression *Right = Expr_Pop(Jit);
+        jit_expression *Left = Expr_Peek(Jit);
+        jit_expression *Result = Left;
         switch (Oper)
         {
-        case TOK_PLUS: Result = Result + Right; break;
-        case TOK_MINUS: Result = Result - Right; break;
-        case TOK_STAR: Result = Result * Right; break;
-        case TOK_SLASH: Result = Result / Right; break;
-        case TOK_CARET: Result = pow(Result, Right); break;
+        case TOK_PLUS: *Result = Expr_Add(Jit, Left, Right); break;
+        case TOK_MINUS: *Result = Expr_Sub(Jit, Left, Right); break;
+        case TOK_STAR: *Result = Expr_Mul(Jit, Left, Right); break;
+        case TOK_SLASH: *Result = Expr_Div(Jit, Left, Right); break;
+        case TOK_CARET: 
+        {
+            assert(false && "TODO: pow(x, y)");
+        } break;
         default: 
         {
             /* unreachable */
@@ -341,7 +415,6 @@ static double Jit_ParseExpr(jit *Jit, precedence Prec)
         } break;
         }
     }
-    return Result;
 }
 
 
@@ -424,10 +497,14 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
                 Error(Jit, "Expected function name.");
             }
         }
-        /* TODO: standalone expr */
         else 
         {
-            Error(Jit, "Expected function name.");
+            Jit_ParseExpr(Jit, PREC_EXPR);
+            printf("Stack: %d/%d, value = %3.2f\n", Jit->ExprStackSize, Jit->ExprStackCapacity, Jit->ExprStack[0].As.Number);
+            return (jit_result) {
+                .Valid = !Jit->Error,
+                .As.Number = Jit->ExprStack[0].As.Number,
+            };
         }
 
         if (!ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))

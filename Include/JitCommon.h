@@ -1,9 +1,21 @@
 #ifndef JIT_COMMON_H
 #define JIT_COMMON_H
 
-typedef struct jit_expression
+
+typedef struct jit_expression jit_expression;
+
+typedef enum jit_expression_type 
 {
-} jit_expression;
+    EXPR_CONST,
+} jit_expression_type;
+
+struct jit_expression
+{
+    jit_expression_type Type;
+    union {
+        double Number;
+    } As;
+};
 
 enum jit_token_type 
 {

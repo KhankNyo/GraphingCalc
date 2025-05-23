@@ -84,7 +84,7 @@ void Platform_RequestRedraw(void);
 /* main loop */
 graph_state Graph_OnEntry(void);
 void Graph_OnLoop(graph_state *State);
-void Graph_OnTermination(graph_state *State);
+void Graph_OnExit(graph_state *State);
 
 /* event handlers */
 void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse);
