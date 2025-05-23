@@ -308,7 +308,7 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
     {
         double MajorY = FloorToMultiple(y, State->Bg.MajorYSpacing);
 
-        if (0 == MajorY || !IN_RANGEX(GraphLeft, MajorY, GraphRight))
+        if (0 == MajorY || !IN_RANGEX(GraphBottom, MajorY, GraphTop))
             continue;
         Graph_DrawLine(
             State, Ctx, 
