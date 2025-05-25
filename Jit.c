@@ -375,11 +375,11 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
 
     /* call the function */
     jit_expression Result = { .Type = EXPR_CONST, };
-    if (Function->Body.Type == EXPR_CONST)
+    if (Function->Body.Type == EXPR_CONST) /* const function, returns the value */
     {
         Result = Function->Body;
     }
-    else
+    else /* non-const function, execute the call */
     {
         assert(false && "TODO: non-const call.");
     }
@@ -551,7 +551,6 @@ static void Jit_PushGlobal(jit *Jit, jit_variable *Global)
 static void FunctionDecl(jit *Jit, jit_token FnName)
 {
     /* consumed '(' */
-
     def_table_entry *Label = DefTable_Define(&Jit->Global, FnName.Str.Ptr, FnName.Str.Len, TYPE_FUNCTION);
     Jit_FunctionBeginScope(Jit, &Label->As.Function);
     {
@@ -559,7 +558,8 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         if (NextToken(Jit).Type == TOK_IDENTIFIER)
         {
             do {
-                jit_token Parameter = ConsumeToken(Jit);
+                ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
+                jit_token Parameter = CurrToken(Jit); 
                 Jit_FunctionPushLocal(Jit, &Label->As.Function, &Parameter);
             } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
         }
@@ -580,7 +580,6 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
 static void VariableDecl(jit *Jit, jit_token Identifier)
 {
     /* consumed Identifier */
-
     def_table_entry *Definition = DefTable_Define(&Jit->Global, Identifier.Str.Ptr, Identifier.Str.Len, TYPE_VARIABLE);
     Jit_PushGlobal(Jit, &Definition->As.Variable);
 
