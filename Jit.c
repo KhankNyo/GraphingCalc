@@ -1,7 +1,6 @@
 #include "Jit.h"
 #include "DefTable.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <math.h>
 #include <stdarg.h>
