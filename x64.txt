@@ -1,0 +1,15 @@
+
+addsd: F2 0F 58 /r ADDSD xmm1, xmm2/m64
+subsd: F2 0F 5C /r SUBSD xmm1, xmm2/m64
+mulsd: F2 0F 59 /r MULSD xmm1,xmm2/m64
+divsd: F2 0F 5E /r DIVSD xmm1, xmm2/m64
+sqrtsd: F2 0F 51 /r SQRTSD xmm1,xmm2/m64
+
+movsd: F2 0F 10 /r MOVSD xmm1, xmm2/m64
+       F2 0F 11 /r MOVSD xmm1/m64, xmm2
+xorps: 0F 57 /r XORPS xmm1, xmm2/m128 // for negation 
+
+call: E8 rel32
+ret: C3
+push: 50 + reg
+pop: 58 + reg
