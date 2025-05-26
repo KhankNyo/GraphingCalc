@@ -1,5 +1,5 @@
+#include "Common.h"
 #include "DefTable.h"
-#include <assert.h>
 
 
 #define EMPTY(p_e) (NULL == (p_e)->As.Str.Ptr)
@@ -11,16 +11,6 @@ static u32 DefTable_Hash(const char *Str, int StrLen)
     return (Str[0] & 0x1F) | (Str[StrLen - 1] << 6);
 }
 
-static bool8 StrEqu(const char *A, const char *B, int Len)
-{
-    int i = 0;
-    for (; i < Len; i++)
-    {
-        if (A[i] != B[i])
-            return false;
-    }
-    return true;
-}
 
 
 static def_table_entry *GetArray(def_table *Table)

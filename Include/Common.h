@@ -65,6 +65,16 @@ static inline char Lowercase(char Ch)
     return Ch | 0x20;
 }
 
+static inline bool8 StrEqu(const char *A, const char *B, int Len)
+{
+    int i = 0;
+    for (; i < Len; i++)
+    {
+        if (A[i] != B[i])
+            return false;
+    }
+    return true;
+}
 
 
 #endif /* COMMON_H */
