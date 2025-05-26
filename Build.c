@@ -9,3 +9,4 @@
 #include "Jit.c"
 #include "Graph.c"
 #include "Win32.c"
+#include "Emitter.c"
