@@ -186,6 +186,7 @@ uint X64DisasmSingleInstruction(u8 *Memory, uint MemorySize, char *ResultBuffer,
     }
     else if (0xF2 == PEEK(&Disasm, 0) && 0x0F == PEEK(&Disasm, 1))
     {
+        disasm_modrm_type ModRmType = MODRM_DST_SRC;
         u8 InstructionByte = PEEK(&Disasm, 3);
         Disasm.InstructionSize += 3;
         switch (InstructionByte)
@@ -199,16 +200,16 @@ uint X64DisasmSingleInstruction(u8 *Memory, uint MemorySize, char *ResultBuffer,
         case 0x11: /* movsd r/m, r */
         {
             WriteInstruction(&Disasm, "movsd ");
-            X64DisasmModRM(&Disasm, MODRM_SRC_DST);
+            ModRmType = MODRM_SRC_DST;
         } break;
         default: 
         {
-            WriteInstruction(&Disasm, "???");
-            return Disasm.InstructionSize;
+            WriteInstruction(&Disasm, "??? ");
+            /* next byte is probably modrm */
         } break;
         }
 
-        X64DisasmModRM(&Disasm, MODRM_DST_SRC);
+        X64DisasmModRM(&Disasm, ModRmType);
     }
     return Disasm.InstructionSize;
 }
