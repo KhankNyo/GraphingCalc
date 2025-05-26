@@ -3,6 +3,7 @@
 
 #include "Common.h"
 #include "JitCommon.h"
+#include "Emitter.h"
 #include "DefTable.h"
 
 typedef struct jit_result
@@ -33,13 +34,10 @@ typedef struct jit
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
 
-
-    int RegisterCount;
     int MemStack;
-    u8 InstructionBuffer[256];
-    int InstructionByteCount;
-    double ConstBuffer[256];
     int ConstCount;
+    double Const[256];
+    jit_emitter Emitter;
 } jit;
 
 jit Jit_Init(void);

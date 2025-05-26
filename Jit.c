@@ -359,6 +359,40 @@ static void Expr_Neg(jit *Jit)
     }
 }
 
+
+/* TODO: jit vs emitter on expression ownership */
+static jit_expression Jit_AllocateStack(jit *Jit)
+{
+    jit_expression StackSpace = {
+        .Type = EXPR_MEM,
+        .As.Mem = {
+            .Offset = Jit->MemStack*8,
+            .BaseReg = 1,
+        }, 
+    };
+    Jit->MemStack++;
+    return StackSpace;
+}
+
+static jit_expression Jit_AllocateGlobal(jit *Jit)
+{
+    jit_expression Global = {
+        .Type = EXPR_MEM,
+        .As.Mem = {
+            .Offset = Jit->ConstCount*8,
+            .BaseReg = 0
+        }, 
+    };
+    return Global;
+}
+
+static jit_expression Jit_AllocateConst(jit *Jit, double Value)
+{
+    jit_expression Const = Jit_AllocateGlobal(Jit);
+    Jit->Const[Jit->ConstCount++] = Value;
+    return Const;
+}
+
 #define DEFINE_EXPR_BINARY(name, op)\
 static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) {\
     (void)Jit;\
@@ -373,56 +407,29 @@ static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_express
 static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) 
 
 
-#define PUSH_INS_BYTE(byte) do {\
-    (Jit)->InstructionBuffer[(Jit)->InstructionByteCount] = byte;\
-    (Jit)->InstructionByteCount++;\
-} while (0)
+
 static jit_expression Expr_Add(jit *Jit, jit_expression *Left, jit_expression *Right) {\
     (void)Jit;\
     jit_expression Result = { .Type = EXPR_CONST, };\
     if (Left->Type == EXPR_CONST && Right->Type == EXPR_CONST) {\
         Result.As.Number = Left->As.Number + Right->As.Number;\
     } else {
-        Result.Type = EXPR_MEM;
-        Result.As.MemOffset = Jit->MemStack;
-        Jit->MemStack += 8;
+        Result = Jit_AllocateStack(Jit);
 
         /* move left and right to regs */
-        uint LeftReg = Jit->RegisterCount++;
+        int LeftReg = 0;
         switch (Left->Type)
         {
         case EXPR_MEM:
         {
             /* movsd left, [rip + offset to mem] */
-            PUSH_INS_BYTE(0xF2);
-            PUSH_INS_BYTE(0x0F);
-            PUSH_INS_BYTE(0x10);
-            u8 ModRm = 0x5 | LeftReg << 3;
-            PUSH_INS_BYTE(ModRm);
-
-            u32 Offset = Left->As.MemOffset;
-            PUSH_INS_BYTE(Offset >> 0);
-            PUSH_INS_BYTE(Offset >> 8);
-            PUSH_INS_BYTE(Offset >> 16);
-            PUSH_INS_BYTE(Offset >> 24);
+            Emit_Load(&Jit->Emitter, LeftReg, Left);
         } break;
         case EXPR_CONST:
         {
             /* allocate the const */
-            Jit->ConstBuffer[Jit->ConstCount] = Left->As.Number;
-            i32 Offset = 8*Jit->ConstCount++;
-
-            /* movsd left, [rip + offset to const] */
-            PUSH_INS_BYTE(0xF2);
-            PUSH_INS_BYTE(0x0F);
-            PUSH_INS_BYTE(0x10);
-            u8 ModRm = 0x5 | LeftReg << 3;
-            PUSH_INS_BYTE(ModRm);
-
-            PUSH_INS_BYTE(Offset >> 0);
-            PUSH_INS_BYTE(Offset >> 8);
-            PUSH_INS_BYTE(Offset >> 16);
-            PUSH_INS_BYTE(Offset >> 24);
+            *Right = Jit_AllocateConst(Jit, Right->As.Number);
+            Emit_Load(&Jit->Emitter, LeftReg, Left);
         } break;
         }
 
@@ -432,54 +439,18 @@ static jit_expression Expr_Add(jit *Jit, jit_expression *Left, jit_expression *R
         case EXPR_MEM:
         {
             /* addsd left, [rip + offset to right] */
-            PUSH_INS_BYTE(0xF2);
-            PUSH_INS_BYTE(0x0F);
-            PUSH_INS_BYTE(0x58);
-            u8 ModRm = 0x5 | LeftReg << 3;
-            PUSH_INS_BYTE(ModRm);
-
-            u32 Offset = Right->As.MemOffset;
-            PUSH_INS_BYTE(Offset >> 0);
-            PUSH_INS_BYTE(Offset >> 8);
-            PUSH_INS_BYTE(Offset >> 16);
-            PUSH_INS_BYTE(Offset >> 24);
+            Emit_Add(&Jit->Emitter, LeftReg, Right);
         } break;
         case EXPR_CONST:
         {
             /* allocate the const */
-            Jit->ConstBuffer[Jit->ConstCount] = Right->As.Number;
-            i32 Offset = 8*Jit->ConstCount++;
-
-            /* addsd left, [rip + offset to const right] */
-            PUSH_INS_BYTE(0xF2);
-            PUSH_INS_BYTE(0x0F);
-            PUSH_INS_BYTE(0x58);
-            u8 ModRm = 0x5 | LeftReg << 3;
-            PUSH_INS_BYTE(ModRm);
-
-            PUSH_INS_BYTE(Offset >> 0);
-            PUSH_INS_BYTE(Offset >> 8);
-            PUSH_INS_BYTE(Offset >> 16);
-            PUSH_INS_BYTE(Offset >> 24);
+            *Right = Jit_AllocateConst(Jit, Right->As.Number);
+            Emit_Add(&Jit->Emitter, LeftReg, Right);
         } break;
         }
 
         /* move to result */
-        /* movsd [result], left */
-        PUSH_INS_BYTE(0xF2);
-        PUSH_INS_BYTE(0x0F);
-        PUSH_INS_BYTE(0x11);
-        u8 ModRm = 0x5 | LeftReg << 3;
-        PUSH_INS_BYTE(ModRm);
-
-        i32 Offset = Result.As.MemOffset;
-        PUSH_INS_BYTE(Offset >> 0);
-        PUSH_INS_BYTE(Offset >> 8);
-        PUSH_INS_BYTE(Offset >> 16);
-        PUSH_INS_BYTE(Offset >> 24);
-
-        /* deallocate left reg */
-        Jit->RegisterCount--;
+        Emit_Store(&Jit->Emitter, LeftReg, &Result);
     }\
     return Result;\
 }\
@@ -558,7 +529,6 @@ static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
     else
     {
         Result = Variable->Expr;
-        //assert(false && "TODO: non-const variable.");
     }
     return Result;
 ErrReturn:
@@ -688,9 +658,6 @@ static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_to
     Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
         .Str = Parameter->Str,
         .Offset = Function->ParamCount,
-        .Expr = {
-            .Type = EXPR_MEM,
-        }, 
     };
     Jit->LocalVarCount++;
     Function->ParamCount++;
@@ -702,7 +669,8 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
 {
     /* consumed '(' */
     def_table_entry *Label = DefTable_Define(&Jit->Global, FnName.Str.Ptr, FnName.Str.Len, TYPE_FUNCTION);
-    Jit_FunctionBeginScope(Jit, &Label->As.Function);
+    jit_function *Function = &Label->As.Function;
+    Jit_FunctionBeginScope(Jit, Function);
     {
         /* parameter */
         if (NextToken(Jit).Type == TOK_IDENTIFIER)
@@ -710,25 +678,25 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
             do {
                 ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
                 jit_token Parameter = CurrToken(Jit); 
-                Jit_FunctionPushLocal(Jit, &Label->As.Function, &Parameter);
+                Jit_FunctionPushLocal(Jit, Function, &Parameter);
             } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
         }
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
-        /* emit function entry code */
-        assert(false && "TODO: function entry and param setup code");
-
         /* equ sign */
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
+
+        /* emit function entry code */
+        Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
 
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
         {
-            Label->As.Function.Result = *Expr_Pop(Jit);
+            Function->Result = *Expr_Pop(Jit);
         }
 
         /* emit function exit code */
-        assert(false && "TODO: function exit code");
+        Emit_FunctionExit(&Jit->Emitter);
     }
     Jit_FunctionEndScope(Jit);
 }
@@ -795,14 +763,14 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
 Done:
     char Instruction[64];
     uint BytesPerLine = 10;
-    printf("memstack: %d, constcount: %d, regcount: %d\n", Jit->MemStack, Jit->ConstCount, Jit->RegisterCount);
-    for (int i = 0; i < Jit->InstructionByteCount;)
+    printf("memstack: %d, constcount: %d\n", Jit->MemStack, Jit->ConstCount);
+    for (int i = 0; i < Jit->Emitter.InstructionByteCount;)
     {
-        uint InstructionBytes = DisasmSingleInstruction(Jit->InstructionBuffer + i, Jit->InstructionByteCount - i, Instruction);
+        uint InstructionBytes = DisasmSingleInstruction(Jit->Emitter.InstructionBuffer + i, Jit->Emitter.InstructionByteCount - i, Instruction);
         uint k;
         for (k = 0; k < InstructionBytes; k++)
         {
-            printf("%02x ", Jit->InstructionBuffer[i + k]);
+            printf("%02x ", Jit->Emitter.InstructionBuffer[i + k]);
         }
         while (k < BytesPerLine)
         {

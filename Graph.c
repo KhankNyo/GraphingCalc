@@ -374,7 +374,7 @@ graph_state Graph_OnEntry(void)
     const char *Expr = 
         "def n = 4\n"
         "def m = 4\n"
-        "def f(x) = x + 4 + 5 + 6\n"
+        "def f(x) = x + 4\n"
         "\n";
     jit_result Result = Jit_Evaluate(&Jit, Expr);
     if (Result.Valid)

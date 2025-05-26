@@ -46,8 +46,9 @@ struct jit_expression
     union {
         double Number;
         struct {
-            int MemOffset;
-        };
+            int Offset;
+            uint BaseReg;
+        } Mem;
     } As;
 };
 
