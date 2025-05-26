@@ -1,7 +1,8 @@
 
 #include <stdarg.h>
 #include <stdio.h>
-#include "x86Disasm.h"
+#include "Emitter.h"
+#include "Include/Platform.h"
 
 
 typedef struct disasm_data
@@ -9,8 +10,8 @@ typedef struct disasm_data
     u8 *Memory;
     char *DisasmBuffer;
 
-    uint MemoryCapacity;
-    uint InstructionSize;
+    int MemoryCapacity;
+    int InstructionSize;
     uint DisasmBufferSize;
     uint DisasmBufferCap;
 } disasm_data;
@@ -20,6 +21,11 @@ typedef enum disasm_modrm_type
     MODRM_DST_SRC,
     MODRM_SRC_DST,
 } disasm_modrm_type;
+
+
+
+
+
 
 #define PEEK(p_dd, offset) ((p_dd)->InstructionSize + (offset) < (p_dd)->MemoryCapacity\
     ? (p_dd)->Memory[(p_dd)->InstructionSize + (offset)]\
@@ -167,14 +173,14 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type)
 }
 
 
-uint X64DisasmSingleInstruction(u8 *Memory, uint MemorySize, char *ResultBuffer, uint ResultBufferCapacity)
+uint DisasmSingleInstruction(u8 *Memory, int MemorySize, char ResultBuffer[64])
 {
     assert(MemorySize > 0);
     disasm_data Disasm = {
         .Memory = Memory,
         .MemoryCapacity = MemorySize,
         .DisasmBuffer = ResultBuffer,
-        .DisasmBufferCap = ResultBufferCapacity,
+        .DisasmBufferCap = 64,
     };
 
     if (0x0F == PEEK(&Disasm, 0) && 0x57 == PEEK(&Disasm, 1))
@@ -187,7 +193,7 @@ uint X64DisasmSingleInstruction(u8 *Memory, uint MemorySize, char *ResultBuffer,
     else if (0xF2 == PEEK(&Disasm, 0) && 0x0F == PEEK(&Disasm, 1))
     {
         disasm_modrm_type ModRmType = MODRM_DST_SRC;
-        u8 InstructionByte = PEEK(&Disasm, 3);
+        u8 InstructionByte = PEEK(&Disasm, 2);
         Disasm.InstructionSize += 3;
         switch (InstructionByte)
         {
@@ -210,6 +216,10 @@ uint X64DisasmSingleInstruction(u8 *Memory, uint MemorySize, char *ResultBuffer,
         }
 
         X64DisasmModRM(&Disasm, ModRmType);
+    }
+    else
+    {
+        WriteInstruction(&Disasm, "???");
     }
     return Disasm.InstructionSize;
 }
