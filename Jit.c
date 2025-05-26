@@ -1,5 +1,6 @@
 #include "Jit.h"
 #include "DefTable.h"
+#include "Emitter.h"
 
 #include <stdio.h>
 #include <math.h>
@@ -117,11 +118,21 @@ static jit_token ParseNumber(jit *Jit, char First)
 
 static jit_token ParseIdentifier(jit *Jit)
 {
+#define STREQU(literal, strv) \
+    (((sizeof(literal) - 1) == (strv).Len)\
+     && StrEqu(literal, (strv).Ptr, sizeof(literal) - 1))
     while (IsIdentifier(Peek(Jit, 0)))
     {
         Advance(Jit);
     }
-    return CreateToken(Jit, TOK_IDENTIFIER);
+
+    jit_token Identifier = CreateToken(Jit, TOK_IDENTIFIER);
+    if (STREQU("def", Identifier.Str))
+    {
+        Identifier.Type = TOK_DEF;
+    }
+    return Identifier;
+#undef STREQU
 }
 
 
@@ -269,6 +280,7 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->Offset = 1;
     Jit->Error = false;
     Jit->LocalVarCount = 0;
+    Jit->LocalVarBase = 0;
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
@@ -277,6 +289,34 @@ static void Jit_Reset(jit *Jit, const char *Expr)
 
 
 
+
+static jit_variable *Jit_FindVariable(jit *Jit, const jit_token *VarName)
+{
+    const char *Ptr = VarName->Str.Ptr;
+    int Len = VarName->Str.Len;
+
+    if (Jit->ScopeCount) /* in scope */
+    {
+        for (int i = Jit->LocalVarBase; i < Jit->LocalVarCount; i++)
+        {
+            jit_variable *Variable = &Jit->LocalVars[i];
+            if (Len == Variable->Str.Len 
+            && StrEqu(Ptr, Variable->Str.Ptr, Len))
+            {
+                return Variable;
+            }
+        }
+        /* failed local scope search, switch to global */
+    }
+
+    /* global scope */
+    def_table_entry *Entry = DefTable_Find(&Jit->Global, Ptr, Len, TYPE_VARIABLE);
+    if (NULL == Entry)
+    {
+        return NULL;
+    }
+    return &Entry->As.Variable;
+}
 
 
 static jit_expression *Expr_Peek(jit *Jit)
@@ -332,7 +372,117 @@ static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_express
 }\
 static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) 
 
-DEFINE_EXPR_BINARY(Add, +);
+
+#define PUSH_INS_BYTE(byte) do {\
+    (Jit)->InstructionBuffer[(Jit)->InstructionByteCount] = byte;\
+    (Jit)->InstructionByteCount++;\
+} while (0)
+static jit_expression Expr_Add(jit *Jit, jit_expression *Left, jit_expression *Right) {\
+    (void)Jit;\
+    jit_expression Result = { .Type = EXPR_CONST, };\
+    if (Left->Type == EXPR_CONST && Right->Type == EXPR_CONST) {\
+        Result.As.Number = Left->As.Number + Right->As.Number;\
+    } else {
+        Result.Type = EXPR_MEM;
+        Result.As.MemOffset = Jit->MemStack;
+        Jit->MemStack += 8;
+
+        /* move left and right to regs */
+        uint LeftReg = Jit->RegisterCount++;
+        switch (Left->Type)
+        {
+        case EXPR_MEM:
+        {
+            /* movsd left, [rip + offset to mem] */
+            PUSH_INS_BYTE(0xF2);
+            PUSH_INS_BYTE(0x0F);
+            PUSH_INS_BYTE(0x10);
+            u8 ModRm = 0x5 | LeftReg << 3;
+            PUSH_INS_BYTE(ModRm);
+
+            u32 Offset = Left->As.MemOffset;
+            PUSH_INS_BYTE(Offset >> 0);
+            PUSH_INS_BYTE(Offset >> 8);
+            PUSH_INS_BYTE(Offset >> 16);
+            PUSH_INS_BYTE(Offset >> 24);
+        } break;
+        case EXPR_CONST:
+        {
+            /* allocate the const */
+            Jit->ConstBuffer[Jit->ConstCount] = Left->As.Number;
+            i32 Offset = 8*Jit->ConstCount++;
+
+            /* movsd left, [rip + offset to const] */
+            PUSH_INS_BYTE(0xF2);
+            PUSH_INS_BYTE(0x0F);
+            PUSH_INS_BYTE(0x10);
+            u8 ModRm = 0x5 | LeftReg << 3;
+            PUSH_INS_BYTE(ModRm);
+
+            PUSH_INS_BYTE(Offset >> 0);
+            PUSH_INS_BYTE(Offset >> 8);
+            PUSH_INS_BYTE(Offset >> 16);
+            PUSH_INS_BYTE(Offset >> 24);
+        } break;
+        }
+
+        /* add */
+        switch (Right->Type)
+        {
+        case EXPR_MEM:
+        {
+            /* addsd left, [rip + offset to right] */
+            PUSH_INS_BYTE(0xF2);
+            PUSH_INS_BYTE(0x0F);
+            PUSH_INS_BYTE(0x58);
+            u8 ModRm = 0x5 | LeftReg << 3;
+            PUSH_INS_BYTE(ModRm);
+
+            u32 Offset = Right->As.MemOffset;
+            PUSH_INS_BYTE(Offset >> 0);
+            PUSH_INS_BYTE(Offset >> 8);
+            PUSH_INS_BYTE(Offset >> 16);
+            PUSH_INS_BYTE(Offset >> 24);
+        } break;
+        case EXPR_CONST:
+        {
+            /* allocate the const */
+            Jit->ConstBuffer[Jit->ConstCount] = Right->As.Number;
+            i32 Offset = 8*Jit->ConstCount++;
+
+            /* addsd left, [rip + offset to const right] */
+            PUSH_INS_BYTE(0xF2);
+            PUSH_INS_BYTE(0x0F);
+            PUSH_INS_BYTE(0x58);
+            u8 ModRm = 0x5 | LeftReg << 3;
+            PUSH_INS_BYTE(ModRm);
+
+            PUSH_INS_BYTE(Offset >> 0);
+            PUSH_INS_BYTE(Offset >> 8);
+            PUSH_INS_BYTE(Offset >> 16);
+            PUSH_INS_BYTE(Offset >> 24);
+        } break;
+        }
+
+        /* move to result */
+        /* movsd [result], left */
+        PUSH_INS_BYTE(0xF2);
+        PUSH_INS_BYTE(0x0F);
+        PUSH_INS_BYTE(0x11);
+        u8 ModRm = 0x5 | LeftReg << 3;
+        PUSH_INS_BYTE(ModRm);
+
+        i32 Offset = Result.As.MemOffset;
+        PUSH_INS_BYTE(Offset >> 0);
+        PUSH_INS_BYTE(Offset >> 8);
+        PUSH_INS_BYTE(Offset >> 16);
+        PUSH_INS_BYTE(Offset >> 24);
+
+        /* deallocate left reg */
+        Jit->RegisterCount--;
+    }\
+    return Result;\
+}\
 DEFINE_EXPR_BINARY(Sub, -);
 DEFINE_EXPR_BINARY(Mul, *);
 DEFINE_EXPR_BINARY(Div, /);
@@ -358,6 +508,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     {
         do {
             Jit_ParseExpr(Jit, PREC_EXPR);
+            ArgCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
     ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument%s.", 
@@ -374,9 +525,9 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
 
     /* call the function */
     jit_expression Result = { .Type = EXPR_CONST, };
-    if (Function->Body.Type == EXPR_CONST) /* const function, returns the value */
+    if (Function->Result.Type == EXPR_CONST) /* const function, returns the value */
     {
-        Result = Function->Body;
+        Result = Function->Result;
     }
     else /* non-const function, execute the call */
     {
@@ -391,13 +542,12 @@ static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
 {
     /* consumed VarName */
     /* find the variable */
-    def_table_entry *Entry = DefTable_Find(&Jit->Global, VarName->Str.Ptr, VarName->Str.Len, TYPE_VARIABLE);
-    if (!Entry)
+    jit_variable *Variable = Jit_FindVariable(Jit, VarName);
+    if (NULL == Variable)
     {
-        Error(Jit, "Undefined variable: '%.*s'.", VarName->Str.Len, VarName->Str.Ptr);
+        Error(Jit, "Undefined variable.");
         goto ErrReturn;
     }
-    jit_variable *Variable = &Entry->As.Variable;
 
     /* get the value */
     jit_expression Result = { .Type = EXPR_CONST };
@@ -407,7 +557,8 @@ static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
     }
     else
     {
-        assert(false && "TODO: non-const variable.");
+        Result = Variable->Expr;
+        //assert(false && "TODO: non-const variable.");
     }
     return Result;
 ErrReturn:
@@ -521,7 +672,9 @@ static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
     assert(Jit->LocalVarCount < Jit->LocalVarCapacity && "TODO: Dynamic capacity.");
     Function->ParamStart = Jit->LocalVarCount;
     Function->ParamCount = 0;
+
     Jit->ScopeCount++;
+    Jit->LocalVarBase = Jit->LocalVarCount;
 }
 
 static void Jit_FunctionEndScope(jit *Jit)
@@ -535,14 +688,12 @@ static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_to
     Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
         .Str = Parameter->Str,
         .Offset = Function->ParamCount,
+        .Expr = {
+            .Type = EXPR_MEM,
+        }, 
     };
     Jit->LocalVarCount++;
     Function->ParamCount++;
-}
-
-static void Jit_PushGlobal(jit *Jit, jit_variable *Global)
-{
-    Global->Offset = Jit->Global.Count - 1;
 }
 
 
@@ -564,14 +715,20 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         }
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
+        /* emit function entry code */
+        assert(false && "TODO: function entry and param setup code");
+
         /* equ sign */
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
         {
-            Label->As.Function.Body = *Expr_Pop(Jit);
+            Label->As.Function.Result = *Expr_Pop(Jit);
         }
+
+        /* emit function exit code */
+        assert(false && "TODO: function exit code");
     }
     Jit_FunctionEndScope(Jit);
 }
@@ -580,7 +737,7 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
 {
     /* consumed Identifier */
     def_table_entry *Definition = DefTable_Define(&Jit->Global, Identifier.Str.Ptr, Identifier.Str.Len, TYPE_VARIABLE);
-    Jit_PushGlobal(Jit, &Definition->As.Variable);
+    Definition->As.Variable.Offset = Jit->Global.Count - 1;
 
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
@@ -604,9 +761,10 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
     Jit_Reset(Jit, Expr);
     while (1)
     {
-        /* declaration */
-        if (ConsumeIfNextTokenIs(Jit, TOK_IDENTIFIER))
+        /* definition */
+        if (ConsumeIfNextTokenIs(Jit, TOK_DEF))
         {
+            ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected an identifier.");
             jit_token Identifier = CurrToken(Jit);
             if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
             {
@@ -621,10 +779,10 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
                 Error(Jit, "Expected function name.");
             }
         }
+        /* expression */
         else 
         {
             Jit_ParseExpr(Jit, PREC_EXPR);
-            printf("Stack: %d/%d, value = %3.2f\n", Jit->ExprStackSize, Jit->ExprStackCapacity, Jit->ExprStack[0].As.Number);
             goto Done;
         }
 
@@ -633,7 +791,29 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
             ConsumeOrError(Jit, TOK_EOF, "Expected new line.");
         }
     }
+
 Done:
+    char Instruction[64];
+    uint BytesPerLine = 10;
+    printf("memstack: %d, constcount: %d, regcount: %d\n", Jit->MemStack, Jit->ConstCount, Jit->RegisterCount);
+    for (int i = 0; i < Jit->InstructionByteCount;)
+    {
+        uint InstructionBytes = DisasmSingleInstruction(Jit->InstructionBuffer + i, Jit->InstructionByteCount - i, Instruction);
+        uint k;
+        for (k = 0; k < InstructionBytes; k++)
+        {
+            printf("%02x ", Jit->InstructionBuffer[i + k]);
+        }
+        while (k < BytesPerLine)
+        {
+            printf("   ");
+            k++;
+        }
+
+        printf("%s\n", Instruction);
+
+        i += InstructionBytes;
+    }
     if (Jit->Error)
     {
         return (jit_result) {
@@ -647,17 +827,7 @@ Done:
             .Valid = true,
             .As.Number = Jit->ExprStack[0].As.Number,
         };
-    }
-#if 0
-    if (!JitCompile(Jit))
-    {
-        return Jit.Result;
-    }
-    double Value = JitRun(Jit);
-    Jit.Result.Valid = true;
-    Jit.Result.Number = Value;
-    return Jit.Result;
-#endif 
+    } 
 }
 
 void Jit_Destroy(jit *Jit)

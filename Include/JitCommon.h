@@ -11,6 +11,7 @@ typedef struct jit_function jit_function;
 
 typedef enum jit_expression_type 
 {
+    EXPR_MEM = 0,
     EXPR_CONST,
 } jit_expression_type;
 
@@ -35,6 +36,7 @@ typedef enum jit_token_type
     TOK_NEWLINE,
     TOK_COMMA, 
 
+    TOK_DEF,
     TOK_EOF,
 } jit_token_type;
 
@@ -43,6 +45,9 @@ struct jit_expression
     jit_expression_type Type;
     union {
         double Number;
+        struct {
+            int MemOffset;
+        };
     } As;
 };
 
@@ -58,7 +63,7 @@ struct jit_function
     strview Str;
     int ParamStart;
     int ParamCount;
-    jit_expression Body;
+    jit_expression Result;
 };
 
 struct jit_token 

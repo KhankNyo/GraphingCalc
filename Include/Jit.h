@@ -21,7 +21,7 @@ typedef struct jit
     int Offset;
     uint SafePeekDist;
 
-    int LocalVarCount, LocalVarCapacity;
+    int LocalVarCount, LocalVarBase, LocalVarCapacity;
     jit_variable LocalVars[256*4];
     int ScopeCount;
     def_table Global;
@@ -32,6 +32,14 @@ typedef struct jit
 
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
+
+
+    int RegisterCount;
+    int MemStack;
+    u8 InstructionBuffer[256];
+    int InstructionByteCount;
+    double ConstBuffer[256];
+    int ConstCount;
 } jit;
 
 jit Jit_Init(void);
