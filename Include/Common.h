@@ -67,10 +67,21 @@ static inline char Lowercase(char Ch)
 
 static inline bool8 StrEqu(const char *A, const char *B, int Len)
 {
-    int i = 0;
-    for (; i < Len; i++)
+    for (int i = 0; i < Len && A[i] && B[i]; i++)
     {
         if (A[i] != B[i])
+            return false;
+    }
+    return true;
+}
+
+static inline bool8 MemEqu(const void *A, const void *B, int Len)
+{
+    const u8 *PtrA = A;
+    const u8 *PtrB = B;
+    for (int i = 0; i < Len; i++)
+    {
+        if (PtrA[i] != PtrB[i])
             return false;
     }
     return true;

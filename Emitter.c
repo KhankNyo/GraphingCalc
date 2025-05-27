@@ -59,6 +59,10 @@ static const char *XmmReg[] = {
 #define MODRM(mod, reg, rm) \
     (((mod) & 0x3) << 6)\
     | REG(reg) | RM(rm)
+#define SIB(scale, index, base) \
+    (((scale) & 0x3) << 6)\
+    | ((index) & 0x7) << 3\
+    | ((base) & 0x7) 
 
 
 static void Emit(jit_emitter *Emitter, int Count, ...)
@@ -72,41 +76,133 @@ static void Emit(jit_emitter *Emitter, int Count, ...)
     va_end(Args);
 }
 
-void Emit_Load(jit_emitter *Emitter, int DstReg, const jit_expression *Mem)
+static void EmitArray(jit_emitter *Emitter, u8 Array[], int Count)
 {
-    u8 ModRm = MODRM(0x2, DstReg, Mem->As.Mem.BaseReg);
-    u32 Offset = Mem->As.Mem.Offset;
-    Emit(Emitter, 8, 0xF2, 0x0F, 0x10, ModRm, 
-        Offset >> 0, 
-        Offset >> 8,
-        Offset >> 16,
-        Offset >> 24
-    );
+    for (int i = 0; i < Count && (uint)Emitter->InstructionByteCount < sizeof(Emitter->InstructionBuffer); i++)
+    {
+        Emitter->InstructionBuffer[Emitter->InstructionByteCount++] = Array[i];
+    }
 }
 
-void Emit_Store(jit_emitter *Emitter, int SrcReg, const jit_expression *Mem)
+static int ModFromDisplacement(i32 Displacement)
 {
-    u8 ModRm = MODRM(0x2, SrcReg, Mem->As.Mem.BaseReg);
-    u32 Offset = Mem->As.Mem.Offset;
-    Emit(Emitter, 8, 0xF2, 0x0F, 0x11, ModRm, 
-        Offset >> 0, 
-        Offset >> 8,
-        Offset >> 16,
-        Offset >> 24
-    );
+    if (0 == Displacement)
+        return 0;
+    if (IN_RANGE(INT8_MIN, Displacement, INT8_MAX))
+        return 1;
+    return 2;
 }
 
-void Emit_Add(jit_emitter *Emitter, int DstReg, const jit_expression *Mem)
+static void Emit_ArithOpcode(jit_emitter *Emitter, u8 Opcode, int DstReg, int SrcBase, i32 SrcOffset)
 {
-    u8 ModRm = MODRM(0x2, DstReg, Mem->As.Mem.BaseReg);
-    u32 Offset = Mem->As.Mem.Offset;
-    Emit(Emitter, 8, 0xF2, 0x0F, 0x58, ModRm, 
-        Offset >> 0, 
-        Offset >> 8,
-        Offset >> 16,
-        Offset >> 24
-    );
+    int Mod = ModFromDisplacement(SrcOffset);
+    if (RBP == SrcBase && 0 == SrcOffset)
+        Mod = 1;
+
+    u8 ModRm = MODRM(Mod, DstReg, SrcBase);
+    Emit(Emitter, 4, 0xF2, 0x0F, Opcode, ModRm);
+    if (RSP == SrcBase)
+    {
+        u8 Sib = SIB(0, RSP, RSP);
+        Emit(Emitter, 1, Sib);
+    }
+
+    switch (Mod)
+    {
+    case 0: break;
+    case 1:
+    {
+        Emit(Emitter, 1, SrcOffset);
+    } break;
+    case 2:
+    {
+        EmitArray(Emitter, (u8 *)&SrcOffset, sizeof SrcOffset);
+    } break;
+    }
 }
+
+static void Emit_ArithOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int SrcReg)
+{
+    u8 ModRm = MODRM(3, DstReg, SrcReg);
+    Emit(Emitter, 4, 0xF2, 0x0F, Opcode, ModRm);
+}
+
+
+
+
+
+void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
+{
+    /* movsd [base + offset], src */
+    Emit_ArithOpcode(Emitter, 0x11, SrcReg, DstBase, SrcOffset);
+}
+
+void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
+{
+    /* movsd dst, [base + offset] */
+    u8 *Curr = Emitter->InstructionBuffer + Emitter->InstructionByteCount;
+    Emit_ArithOpcode(Emitter, 0x11, DstReg, SrcBase, SrcOffset);
+    const u8 *Next = Emitter->InstructionBuffer + Emitter->InstructionByteCount;
+
+    /* if last instruction was a store to the same location that we'll be loading from, 
+     * omit the load */
+    int InstructionLength = Next - Curr;
+    u8 *Prev = Curr - InstructionLength;
+    if (Emitter->InstructionByteCount >= 2*InstructionLength
+    && MemEqu(Prev, Curr, InstructionLength))
+    {
+        Emitter->InstructionByteCount -= InstructionLength;
+        return;
+    }
+    else 
+    {
+        Curr[2] = 0x10;
+    }
+}
+
+
+void Emit_Add(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+{
+    Emit_ArithOpcode(Emitter, 0x58, Dst, Base, Offset);
+}
+
+void Emit_Sub(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+{
+    Emit_ArithOpcode(Emitter, 0x5C, Dst, Base, Offset);
+}
+
+void Emit_Mul(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+{
+    Emit_ArithOpcode(Emitter, 0x59, Dst, Base, Offset);
+}
+
+void Emit_Div(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+{
+    Emit_ArithOpcode(Emitter, 0x5E, Dst, Base, Offset);
+}
+
+
+void Emit_AddReg(jit_emitter *Emitter, int Dst, int Src)
+{
+    Emit_ArithOpcodeReg(Emitter, 0x58, Dst, Src);
+}
+
+void Emit_SubReg(jit_emitter *Emitter, int Dst, int Src)
+{
+    Emit_ArithOpcodeReg(Emitter, 0x5C, Dst, Src);
+}
+
+void Emit_MulReg(jit_emitter *Emitter, int Dst, int Src)
+{
+    Emit_ArithOpcodeReg(Emitter, 0x59, Dst, Src);
+}
+
+void Emit_DivReg(jit_emitter *Emitter, int Dst, int Src)
+{
+    Emit_ArithOpcodeReg(Emitter, 0x5E, Dst, Src);
+}
+
+
 
 
 void Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCount)
@@ -142,8 +238,8 @@ void Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
         Params[i].Expr = (jit_expression) {
             .Type = EXPR_MEM,
             .As.Mem = {
-                .BaseReg = RBP,
                 .Offset = Offset,
+                .BaseReg = RBP
             },
         };
     }

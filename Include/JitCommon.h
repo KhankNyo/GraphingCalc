@@ -12,6 +12,7 @@ typedef struct jit_function jit_function;
 typedef enum jit_expression_type 
 {
     EXPR_MEM = 0,
+    EXPR_REG,
     EXPR_CONST,
 } jit_expression_type;
 
@@ -44,11 +45,12 @@ struct jit_expression
 {
     jit_expression_type Type;
     union {
-        double Number;
+        double Const;
         struct {
             int Offset;
             uint BaseReg;
         } Mem;
+        int Reg;
     } As;
 };
 

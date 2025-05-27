@@ -34,9 +34,11 @@ typedef struct jit
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
 
+    bool8 Reg[8];
+    int RegCount;
     int MemStack;
-    int ConstCount;
-    double Const[256];
+    int PersistCount;
+    double Persist[256];
     jit_emitter Emitter;
 } jit;
 
