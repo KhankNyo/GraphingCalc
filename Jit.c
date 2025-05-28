@@ -394,16 +394,27 @@ static void Jit_DeallocateReg(jit *Jit, int Reg)
     Jit->RegCount--;
 }
 
+static bool8 Jit_AllocateSpecificReg(jit *Jit, int Reg)
+{
+    assert(IN_RANGE(0, Reg, 7));
+    assert((uint)Jit->RegCount < sizeof Jit->Reg);
+    bool8 WasAlreadyAllocated = Jit->Reg[Reg];
+    Jit->RegCount += !WasAlreadyAllocated;
+    Jit->Reg[Reg] = true;
+    return !WasAlreadyAllocated;
+}
+
+/* TODO: not hard code in rbp? */
 static jit_expression Jit_AllocateTemp(jit *Jit)
 {
     jit_expression StackSpace = {
         .Type = EXPR_MEM,
         .As.Mem = {
-            .Offset = Jit->MemStack*8,
+            .Offset = -Jit->MemStack,
             .BaseReg = 5, /* rbp */
         }, 
     };
-    Jit->MemStack++;
+    Jit->MemStack += 8;
     return StackSpace;
 }
 
@@ -427,59 +438,56 @@ static jit_expression Jit_AllocateConst(jit *Jit, double Value)
     return Const;
 }
 
-static jit_expression Jit_ToReg(jit *Jit, jit_expression *Expr)
+static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Expr)
 {
-    jit_expression Result;
     switch (Expr->Type)
     {
     case EXPR_MEM:
     {
-        Result = Jit_AllocateReg(Jit);
-        /* movsd left, [rip + offset to mem] */
-        Emit_Load(&Jit->Emitter, Result.As.Reg, Expr->As.Mem.BaseReg, Expr->As.Mem.Offset);
-    } break;
-    case EXPR_CONST:
-    {
-        Result = Jit_AllocateReg(Jit);
-        /* allocate the const */
-        *Expr = Jit_AllocateConst(Jit, Expr->As.Const);
-        assert(Expr->Type == EXPR_MEM);
-        Emit_Load(&Jit->Emitter, Result.As.Reg, Expr->As.Mem.BaseReg, Expr->As.Mem.Offset);
+        Emit_Load(&Jit->Emitter, Reg, Expr->As.Mem.BaseReg, Expr->As.Mem.Offset);
     } break;
     case EXPR_REG:
     {
-        Result = *Expr;
+        Emit_Move(&Jit->Emitter, Reg, Expr->As.Reg);
+    } break;
+    case EXPR_CONST:
+    {
+        /* allocate the const */
+        jit_expression Const = Jit_AllocateConst(Jit, Expr->As.Const);
+        Emit_Load(&Jit->Emitter, Reg, Const.As.Mem.BaseReg, Const.As.Mem.Offset);
     } break;
     }
-    return Result;
+    return (jit_expression) {
+        .Type = EXPR_REG,
+        .As.Reg = Reg,
+    };
 }
 
 
-
 #define DEFINE_BINARY_EXPR(name, op)\
-static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) {\
-    jit_expression Result = { .Type = EXPR_CONST, };\
-    if (Left->Type == EXPR_CONST && Right->Type == EXPR_CONST) {\
-        Result.As.Const = Left->As.Const op Right->As.Const;\
+static void Expr_ ## name (jit *Jit, jit_expression *Lhs, const jit_expression *Rhs) {\
+    if (Lhs->Type == EXPR_CONST && Rhs->Type == EXPR_CONST) {\
+        Lhs->As.Const op ## = Rhs->As.Const;\
     } else {\
-        Result = Jit_ToReg(Jit, Left);\
-        switch (Right->Type) {\
+        if (EXPR_REG != Lhs->Type) {\
+            *Lhs = Jit_CopyToReg(Jit, Jit_AllocateReg(Jit).As.Reg, Lhs);\
+        }\
+        switch (Rhs->Type) {\
         case EXPR_MEM: {\
-            Emit_ ## name (&Jit->Emitter, Result.As.Reg, Right->As.Mem.BaseReg, Right->As.Mem.Offset);\
-        } break;\
-        case EXPR_CONST: {\
-            *Right = Jit_AllocateConst(Jit, Right->As.Const);\
-            assert(Right->Type == EXPR_MEM);\
-            Emit_ ## name (&Jit->Emitter, Result.As.Reg, Right->As.Mem.BaseReg, Right->As.Mem.Offset);\
+            Emit_ ## name (&Jit->Emitter, Lhs->As.Reg, Rhs->As.Mem.BaseReg, Rhs->As.Mem.Offset);\
         } break;\
         case EXPR_REG: {\
-            Emit_ ## name ## Reg(&Jit->Emitter, Result.As.Reg, Right->As.Reg);\
+            Emit_ ## name ## Reg(&Jit->Emitter, Lhs->As.Reg, Rhs->As.Reg);\
+        } break;\
+        case EXPR_CONST: {\
+            jit_expression Tmp = Jit_AllocateConst(Jit, Rhs->As.Const);\
+            Emit_ ## name (&Jit->Emitter, Lhs->As.Reg, Tmp.As.Mem.BaseReg, Tmp.As.Mem.Offset);\
         } break;\
         }\
     }\
-    return Result;\
 }\
-static jit_expression Expr_ ## name (jit *Jit, jit_expression *Left, jit_expression *Right) 
+static void Expr_ ## name (jit *Jit, jit_expression *Left, const jit_expression *Right) 
+
 
 DEFINE_BINARY_EXPR(Add, +);
 DEFINE_BINARY_EXPR(Sub, -);
@@ -488,10 +496,56 @@ DEFINE_BINARY_EXPR(Div, /);
 
 #undef DEFINE_EXPR_BINARY
 
+static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
+{
+    int ArgCount = 0;
+    if (NextToken(Jit).Type != TOK_RPAREN)
+    {
+        do {
+            assert(ArgCount < 4 && "TODO: more args");
+            if (Jit_ParseExpr(Jit, PREC_EXPR))
+            {
+                jit_expression *Arg = Expr_Pop(Jit);
+                switch (Arg->Type)
+                {
+                case EXPR_CONST:
+                {
+                    jit_expression Global = Jit_AllocateConst(Jit, Arg->As.Const);
+                    Emit_Load(&Jit->Emitter, ArgCount, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
+                } break;
+                case EXPR_MEM:
+                {
+                    Emit_Load(&Jit->Emitter, ArgCount, Arg->As.Mem.BaseReg, Arg->As.Mem.Offset);
+                } break;
+                case EXPR_REG:
+                {
+                    Emit_Move(&Jit->Emitter, ArgCount, Arg->As.Reg);
+                    Jit_DeallocateReg(Jit, Arg->As.Reg);
+                } break;
+                }
+
+                Jit->Reg[ArgCount] = true; /* mark argument register as busy */
+                Jit->RegCount++;
+            }
+            ArgCount++;
+        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+    }
+    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after arguments.");
+
+    /* check arg count */
+    if (ArgCount != Fn->ParamCount)
+    {
+        Error(Jit, "Expected %d arguments to '%.*s', got %d instead.", 
+            Fn->ParamCount, Fn->Str.Len, Fn->Str.Ptr, ArgCount
+        );
+        return false;
+    }
+    return true;
+}
+
 static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
 {
     /* consumed '(' */
-    assert(false && "TODO: function call");
 
     /* find the function */
     def_table_entry *Entry = DefTable_Find(&Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION);
@@ -502,51 +556,72 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     }
     jit_function *Function = &Entry->As.Function;
 
-    /* parse args */
-    int ArgCount = 0;
-    jit_expression *CallArgs = Jit->ExprStack + Jit->ExprStackSize;
-    if (NextToken(Jit).Type != TOK_RPAREN)
+    /* TODO: not hard code in calling convention */
+    int RegCount = 8;
+    u8 PrevAllocatedRegs[8];
+    jit_expression Saved[8] = { 0 };
+    for (int i = 0; i < RegCount; i++)
     {
-        do {
-            if (Jit_ParseExpr(Jit, PREC_EXPR))
-            {
-                jit_expression *Arg = Expr_Peek(Jit);
-                assert(NULL != Arg);
-                switch (Arg->Type)
-                {
-                case EXPR_CONST:
-                {
-                } break;
-                case EXPR_MEM:
-                {
-                } break;
-                }
-            }
-            ArgCount++;
-        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+        PrevAllocatedRegs[i] = Jit->Reg[i];
+        if (Jit->Reg[i]) /* reg was allocated, push its content on stack and deallocate it */
+        {
+            Saved[i] = Jit_AllocateTemp(Jit);
+            Emit_Store(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
+            Jit_DeallocateReg(Jit, i);
+        }
     }
-    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument%s.", 
-        ArgCount > 1? "s" : ""
-    );
 
-    /* check arg count */
-    if (ArgCount != Function->ParamCount)
+    if (!Expr_ParseArgs(Jit, Function))
     {
-        Error(Jit, "Expected %d arguments to '%.*s', got %d instead.", 
-            Function->ParamCount, FnName->Str.Len, FnName->Str.Ptr, ArgCount
-        );
         goto ErrReturn;
     }
 
-    /* call the function */
-    assert(Function->Result.Type != EXPR_CONST);
-    jit_expression Result = Jit_AllocateTemp(Jit);
+    /* call and accquire result */
+    assert(Function->Result.Type == EXPR_REG);
+    Emit_Call(&Jit->Emitter, Function->Location);
 
-    int ReturnRegister = 0;
-    // call and move to return register
-
-    Jit->ExprStackSize -= ArgCount;
-    return Result;
+    /* TODO: unsave temps */
+    jit_expression Result = Function->Result;
+    if (!PrevAllocatedRegs[0]) /* return register was not allocated before */
+    {
+        for (int i = 1; i < RegCount; i++)
+        {
+            if (PrevAllocatedRegs[i]) /* was allocated before, load it back and reallocate it */
+            {
+                Emit_Load(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
+                Jit_AllocateSpecificReg(Jit, i);
+            }
+            else if (Jit->Reg[i]) /* allocated while parsing args but not before, then deallocate it */
+            {
+                Jit_DeallocateReg(Jit, i);
+            }
+        }
+        /* allocate the return register */
+        Jit_AllocateSpecificReg(Jit, Function->Result.As.Reg);
+        return Result;
+    }
+    else /* return register was allocated before */
+    {
+        for (int i = 0; i < RegCount; i++)
+        {
+            if (Jit->Reg[i] && !PrevAllocatedRegs[i]) /* allocated while parsing args but not before, mark it as free */
+            {
+                Jit_DeallocateReg(Jit, i);
+            }
+        }
+        /* allocate a different register from the return register */
+        jit_expression Result = Jit_AllocateReg(Jit);
+        Emit_Move(&Jit->Emitter, Result.As.Reg, Function->Result.As.Reg);
+        for (int i = 0; i < RegCount; i++)
+        {
+            if (PrevAllocatedRegs[i]) /* was allocated before, load it back */
+            {
+                Emit_Load(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
+                Jit_AllocateSpecificReg(Jit, i);
+            }
+        }
+        return Result;
+    }
 ErrReturn:
     return (jit_expression) { 0 };
 }
@@ -641,14 +716,13 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
             continue;
 
         jit_expression *Right = Expr_Pop(Jit);
-        jit_expression *Left = Expr_Peek(Jit);
-        jit_expression *Result = Left;
+        jit_expression *Result = Expr_Peek(Jit);
         switch (Oper)
         {
-        case TOK_PLUS: *Result = Expr_Add(Jit, Left, Right); break;
-        case TOK_MINUS: *Result = Expr_Sub(Jit, Left, Right); break;
-        case TOK_STAR: *Result = Expr_Mul(Jit, Left, Right); break;
-        case TOK_SLASH: *Result = Expr_Div(Jit, Left, Right); break;
+        case TOK_PLUS:  Expr_Add(Jit, Result, Right); break;
+        case TOK_MINUS: Expr_Sub(Jit, Result, Right); break;
+        case TOK_STAR:  Expr_Mul(Jit, Result, Right); break;
+        case TOK_SLASH: Expr_Div(Jit, Result, Right); break;
         case TOK_CARET: 
         {
             assert(false && "TODO: pow(x, y)");
@@ -740,7 +814,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
         /* emit function entry code */
-        uint StackSizeLocation = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
+        Function->Location = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
 
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
@@ -765,11 +839,16 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
                 Emit_Move(&Jit->Emitter, ReturnRegister, Result->As.Reg);
             } break;
             }
+
+            *Result = (jit_expression) {
+                .Type = EXPR_REG,
+                .As.Reg = ReturnRegister,
+            };
         }
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
-        Emit_PatchStackSize(&Jit->Emitter, StackSizeLocation, Jit->MemStack);
+        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->MemStack);
     }
     Jit_FunctionEndScope(Jit);
 }
@@ -827,7 +906,7 @@ jit Jit_Init(void)
 jit_result Jit_Evaluate(jit *Jit, const char *Expr)
 {
     Jit_Reset(Jit, Expr);
-    while (1)
+    while (CurrToken(Jit).Type != TOK_EOF)
     {
         /* definition */
         if (ConsumeIfNextTokenIs(Jit, TOK_DEF))
@@ -861,13 +940,17 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
     }
 
 Done:
-    char Instruction[64];
+    ;
+    char Instruction[64] = { 0 };
     uint BytesPerLine = 10;
     printf("memstack: %d, constcount: %d\n", Jit->MemStack, Jit->PersistCount);
-    for (int i = 0; i < Jit->Emitter.InstructionByteCount;)
+    for (u64 i = 0; i < Jit->Emitter.InstructionByteCount;)
     {
         uint InstructionBytes = 
-            DisasmSingleInstruction(Jit->Emitter.InstructionBuffer + i, Jit->Emitter.InstructionByteCount - i, Instruction);
+            DisasmSingleInstruction(i, Jit->Emitter.InstructionBuffer + i, Jit->Emitter.InstructionByteCount - i, Instruction);
+
+
+        printf("%08x:  ", (u32)i);
         uint k;
         for (k = 0; k < InstructionBytes; k++)
         {

@@ -47,7 +47,7 @@ struct jit_expression
     union {
         double Const;
         struct {
-            int Offset;
+            i32 Offset;
             uint BaseReg;
         } Mem;
         int Reg;
@@ -63,6 +63,7 @@ struct jit_variable
 struct jit_function 
 {
     strview Str;
+    uint Location;
     int ParamStart;
     int ParamCount;
     jit_expression Result;
