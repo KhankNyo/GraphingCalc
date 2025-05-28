@@ -36,7 +36,7 @@ typedef struct jit
 
     bool8 Reg[8];
     int RegCount;
-    int MemStack;
+    i32 MemStack;
     int PersistCount;
     double Persist[256];
     jit_emitter Emitter;
