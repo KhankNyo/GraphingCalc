@@ -200,6 +200,7 @@ static jit_token Jit_Tokenize(jit *Jit)
     case ')': return CreateToken(Jit, TOK_RPAREN);
     case '[': return CreateToken(Jit, TOK_LBRACKET);
     case ']': return CreateToken(Jit, TOK_RBRACKET);
+    case ',': return CreateToken(Jit, TOK_COMMA);
     case '=': return CreateToken(Jit, TOK_EQUAL);
     case '\n': return NewlineToken(Jit);
     case '\0': return CreateToken(Jit, TOK_EOF);
@@ -298,7 +299,7 @@ static jit_variable *Jit_FindVariable(jit *Jit, const jit_token *VarName)
     const char *Ptr = VarName->Str.Ptr;
     int Len = VarName->Str.Len;
 
-    if (Jit->ScopeCount) /* in scope */
+    if (Jit->ScopeCount) /* in local scope */
     {
         for (int i = Jit->LocalVarBase; i < Jit->LocalVarCount; i++)
         {
@@ -490,7 +491,6 @@ DEFINE_BINARY_EXPR(Div, /);
 static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
 {
     /* consumed '(' */
-    assert(false && "TODO");
 
     /* find the function */
     def_table_entry *Entry = DefTable_Find(&Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION);
@@ -687,13 +687,22 @@ static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
     Function->ParamStart = Jit->LocalVarCount;
     Function->ParamCount = 0;
 
+    /* add a new scope */
     Jit->ScopeCount++;
     Jit->LocalVarBase = Jit->LocalVarCount;
+    /* reset mem stack */
+    Jit->MemStack = 0;
 }
 
 static void Jit_FunctionEndScope(jit *Jit)
 {
+    /* back up a scope */
     Jit->ScopeCount--;
+    /* reset memory */
+    Jit->MemStack = 0;
+    /* deallocate all regs */
+    memset(Jit->Reg, 0, sizeof Jit->Reg);
+    Jit->RegCount = 0;
 }
 
 static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_token *Parameter)
@@ -701,7 +710,6 @@ static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_to
     assert(Jit->LocalVarCount + 1 < Jit->LocalVarCapacity && "TODO: Dynamic capacity.");
     Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
         .Str = Parameter->Str,
-        .Offset = Function->ParamCount,
     };
     Jit->LocalVarCount++;
     Function->ParamCount++;
@@ -712,7 +720,6 @@ static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_to
 static void FunctionDecl(jit *Jit, jit_token FnName)
 {
     /* consumed '(' */
-    assert(false && "TODO: function decl");
     def_table_entry *Label = DefTable_Define(&Jit->Global, FnName.Str.Ptr, FnName.Str.Len, TYPE_FUNCTION);
     jit_function *Function = &Label->As.Function;
     Jit_FunctionBeginScope(Jit, Function);
@@ -732,7 +739,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
         /* emit function entry code */
-        Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
+        uint StackSizeLocation = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
 
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
@@ -740,25 +747,28 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
             Function->Result = *Expr_Pop(Jit);
             jit_expression *Result = &Function->Result;
 
+            int ReturnRegister = 0;
             switch (Result->Type)
             {
+            case EXPR_MEM:
+            {
+                Emit_Load(&Jit->Emitter, ReturnRegister, Result->As.Mem.BaseReg, Result->As.Mem.Offset);
+            } break;
             case EXPR_CONST:
             {
                 *Result = Jit_AllocateConst(Jit, Result->As.Const);
+                Emit_Load(&Jit->Emitter, ReturnRegister, Result->As.Mem.BaseReg, Result->As.Mem.Offset);
             } break;
-            case EXPR_MEM:
+            case EXPR_REG:
             {
-                /* do nothing */
+                Emit_Move(&Jit->Emitter, ReturnRegister, Result->As.Reg);
             } break;
             }
-
-            /* result is guaranteed to be in return register */
-            int ReturnRegister = 0;
-            //Emit_Load(&Jit->Emitter, ReturnRegister, Result);
         }
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
+        Emit_PatchStackSize(&Jit->Emitter, StackSizeLocation, Jit->MemStack);
     }
     Jit_FunctionEndScope(Jit);
 }

@@ -57,7 +57,6 @@ struct jit_expression
 struct jit_variable
 {
     strview Str;
-    int Offset;
     jit_expression Expr;
 };
 

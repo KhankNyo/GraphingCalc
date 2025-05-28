@@ -75,16 +75,26 @@ static inline bool8 StrEqu(const char *A, const char *B, int Len)
     return true;
 }
 
-static inline bool8 MemEqu(const void *A, const void *B, int Len)
+static inline bool8 MemEqu(const void *A, const void *B, int ByteCount)
 {
     const u8 *PtrA = A;
     const u8 *PtrB = B;
-    for (int i = 0; i < Len; i++)
+    for (int i = 0; i < ByteCount; i++)
     {
         if (PtrA[i] != PtrB[i])
             return false;
     }
     return true;
+}
+
+static inline void MemCpy(void *restrict Dst, const void *Src, int ByteCount)
+{
+    u8 *DstPtr = Dst;
+    const u8 *SrcPtr = Src;
+    while (ByteCount --> 0)
+    {
+        *DstPtr++ = *SrcPtr++;
+    }
 }
 
 
