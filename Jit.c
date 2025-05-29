@@ -288,8 +288,7 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
     /* 5 = RBP, 0 = RAX */
     Jit->Storage = Storage_Init(5, 0);
-    Jit->Sign.As.Uint = 1llu << 63;
-    Jit->Sign.Location = Storage_AllocateConst(&Jit->Storage, Jit->Sign.As.Double);
+    Jit->SignLocation = Storage_AllocateConst(&Jit->Storage, -0.0);
     ConsumeToken(Jit);
 }
 
@@ -364,8 +363,8 @@ static void Expr_Neg(jit *Jit)
     } break;
     case STORAGE_MEM:
     {
-        int Reg = Jit->Sign.Location.As.Mem.BaseReg;
-        i32 Offset = Jit->Sign.Location.As.Mem.Offset;
+        int Reg = Jit->SignLocation.As.Mem.BaseReg;
+        i32 Offset = Jit->SignLocation.As.Mem.Offset;
         jit_expression Result = Storage_AllocateReg(&Jit->Storage);
         int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
 
@@ -379,8 +378,8 @@ static void Expr_Neg(jit *Jit)
     case STORAGE_REG:
     {
         int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
-        int Reg = Jit->Sign.Location.As.Mem.BaseReg;
-        i32 Offset = Jit->Sign.Location.As.Mem.Offset;
+        int Reg = Jit->SignLocation.As.Mem.BaseReg;
+        i32 Offset = Jit->SignLocation.As.Mem.Offset;
 
         Emit_Load(&Jit->Emitter, TmpReg, Reg, Offset);
         Emit_XorReg(&Jit->Emitter, E->As.Reg, TmpReg);

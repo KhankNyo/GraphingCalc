@@ -33,14 +33,8 @@ typedef struct jit
 
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
+    jit_expression SignLocation;
 
-    struct {
-        union {
-            double Double;
-            u64 Uint;
-        } As;
-        jit_expression Location;
-    } Sign;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;
