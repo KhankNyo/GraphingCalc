@@ -146,20 +146,23 @@ void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg)
 {
     if (DstReg != SrcReg)
     {
-        Emit_FloatOpcodeReg(Emitter, 0x10, DstReg, SrcReg);
+        /* movaps dst, src */
+        Emit(Emitter, 3, 0x0F, 0x28, MODRM(3, DstReg, SrcReg));
     }
 }
 
 void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
 {
-    /* movsd [base + offset], src */
-    Emit_FloatOpcode(Emitter, 0x11, SrcReg, DstBase, SrcOffset);
+    /* movq [base + offset], src */
+    Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
+    Emit_GenericModRm(Emitter, SrcReg, DstBase, SrcOffset);
 }
 
 void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
 {
-    /* movsd dst, [base + offset] */
-    u8 *Curr = Emitter->InstructionBuffer + Emit_FloatOpcode(Emitter, 0x11, DstReg, SrcBase, SrcOffset);
+    /* movq dst, [base + offset] */
+    u8 *Curr = Emitter->InstructionBuffer + Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
+    Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
     const u8 *Next = Emitter->InstructionBuffer + Emitter->InstructionByteCount;
 
     /* if last instruction was a store to the same location that we'll be loading from, 
@@ -174,7 +177,9 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
     }
     else 
     {
-        Curr[2] = 0x10;
+        Curr[0] = 0xF3;
+        Curr[1] = 0x0F;
+        Curr[2] = 0x7E;
     }
 }
 
@@ -218,6 +223,11 @@ void Emit_MulReg(jit_emitter *Emitter, int Dst, int Src)
 void Emit_DivReg(jit_emitter *Emitter, int Dst, int Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x5E, Dst, Src);
+}
+
+void Emit_XorReg(jit_emitter *Emitter, int DstReg, int SrcReg)
+{
+    Emit(Emitter, 3, 0x0F, 0x57, MODRM(3, DstReg, SrcReg));
 }
 
 
@@ -467,13 +477,23 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
     case 0x0F:
     {
         u8 Second = ConsumeByte(&Disasm);
-        if (0x57 == Second)
+        switch (Second)
         {
-            Disasm.InstructionSize += 2;
+        case 0x57:
+        {
             WriteInstruction(&Disasm, "xorps ");
             X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+        } break;
+        case 0x28:
+        {
+            WriteInstruction(&Disasm, "movaps ");
+            X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+        } break;
+        default:
+        {
+            Unknown = true;
+        } break;
         }
-        else Unknown = true;
     } break;
     case 0xF2:
     {
@@ -488,12 +508,6 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             case 0x59: WriteInstruction(&Disasm, "mulsd "); break;
             case 0x5E: WriteInstruction(&Disasm, "divsd "); break;
             case 0x51: WriteInstruction(&Disasm, "sqrtsd "); break;
-            case 0x10: WriteInstruction(&Disasm, "movsd "); break; /* movsd r, r/m */
-            case 0x11: /* movsd r/m, r */
-            {
-                WriteInstruction(&Disasm, "movsd ");
-                ModRmType = MODRM_SRC_DST;
-            } break;
             default:  
             {
                 Unknown = true;
@@ -503,6 +517,28 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             X64DisasmModRM(&Disasm, ModRmType, sXmmReg);
 Done:
             ;
+        }
+        else Unknown = true;
+    } break;
+    case 0xF3:
+    {
+        u8 Second = ConsumeByte(&Disasm);
+        u8 Third = ConsumeByte(&Disasm);
+        if (0x0F == Second && 0x7E == Third)
+        {
+            WriteInstruction(&Disasm, "movq ");
+            X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+        }
+        else Unknown = true;
+    } break;
+    case 0x66:
+    {
+        u8 Second = ConsumeByte(&Disasm);
+        u8 Third = ConsumeByte(&Disasm);
+        if (0x0F == Second && 0xD6 == Third)
+        {
+            WriteInstruction(&Disasm, "movq ");
+            X64DisasmModRM(&Disasm, MODRM_SRC_DST, sXmmReg);
         }
         else Unknown = true;
     } break;

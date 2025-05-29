@@ -43,12 +43,14 @@ jit_storage_manager Storage_Init(int StackPtrReg, int GlobalPtrReg)
         .StackPtrReg = StackPtrReg,
         .GlobalPtrReg = GlobalPtrReg,
     };
+    Storage_ResetTmpAndStack(&S);
     return S;
 }
 
 void Storage_ResetTmpAndStack(jit_storage_manager *S)
 {
-    S->StackSize = 0;
+    S->StackSize = 0x20; /* shadow space */
+    S->MaxStackSize = S->StackSize;
     S->BusyRegCount = 0;
     memset(S->RegIsBusy, 0, Storage_RegCount(S));
 }
@@ -88,7 +90,7 @@ void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
 
 jit_expression Storage_ForceAllocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(IN_RANGE(0, Reg, Storage_RegCount(S) - 1));
+    assert(Reg < Storage_RegCount(S));
     S->BusyRegCount += !S->RegIsBusy[Reg];
     S->RegIsBusy[Reg] = true;
 
@@ -110,13 +112,10 @@ jit_expression Storage_AllocateReg(jit_storage_manager *S)
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(IN_RANGE(0, Reg, Storage_RegCount(S) - 1));
+    assert(Reg < Storage_RegCount(S) - 1);
 
-    //if (S->BusyRegCount)
-    {
-        S->BusyRegCount -= S->RegIsBusy[Reg];
-        S->RegIsBusy[Reg] = false;
-    }
+    S->BusyRegCount -= S->RegIsBusy[Reg];
+    S->RegIsBusy[Reg] = false;
 }
 
 

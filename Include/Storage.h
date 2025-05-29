@@ -30,7 +30,7 @@ typedef struct storage_spill_data
 jit_storage_manager Storage_Init(int StackPtrReg, int GlobalPtrReg);
 void Storage_ResetTmpAndStack(jit_storage_manager *S);
 
-/* spill all registers from RegBegin to RegEnd */
+/* spill all busy registers */
 storage_spill_data Storage_Spill(jit_storage_manager *S);
 void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill);
 

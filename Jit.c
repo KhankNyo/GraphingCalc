@@ -288,6 +288,8 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
     /* 5 = RBP, 0 = RAX */
     Jit->Storage = Storage_Init(5, 0);
+    Jit->Sign.As.Uint = 1llu << 63;
+    Jit->Sign.Location = Storage_AllocateConst(&Jit->Storage, Jit->Sign.As.Double);
     ConsumeToken(Jit);
 }
 
@@ -360,86 +362,33 @@ static void Expr_Neg(jit *Jit)
     {
         E->As.Const = -E->As.Const;
     } break;
-    }
-}
-
-#if 0
-
-static jit_expression Jit_AllocateReg(jit *Jit)
-{
-    assert((uint)Jit->RegCount < sizeof Jit->Reg);
-    int RegIndex = -1;
-    for (uint i = 0; i < sizeof Jit->Reg; i++)
+    case STORAGE_MEM:
     {
-        if (!Jit->Reg[i])
-        {
-            Jit->RegCount++;
-            Jit->Reg[i] = true;
-            RegIndex = i;
-            break;
-        }
+        int Reg = Jit->Sign.Location.As.Mem.BaseReg;
+        i32 Offset = Jit->Sign.Location.As.Mem.Offset;
+        jit_expression Result = Storage_AllocateReg(&Jit->Storage);
+        int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
+
+        Emit_Load(&Jit->Emitter, TmpReg, Reg, Offset);
+        Emit_Load(&Jit->Emitter, Result.As.Reg, E->As.Mem.BaseReg, E->As.Mem.Offset);
+        Emit_XorReg(&Jit->Emitter, Result.As.Reg, TmpReg);
+        Storage_DeallocateReg(&Jit->Storage, TmpReg);
+
+        *E = Result;
+    } break;
+    case STORAGE_REG:
+    {
+        int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
+        int Reg = Jit->Sign.Location.As.Mem.BaseReg;
+        i32 Offset = Jit->Sign.Location.As.Mem.Offset;
+
+        Emit_Load(&Jit->Emitter, TmpReg, Reg, Offset);
+        Emit_XorReg(&Jit->Emitter, E->As.Reg, TmpReg);
+        Storage_DeallocateReg(&Jit->Storage, TmpReg);
+    } break;
     }
-
-    jit_expression Reg = {
-        .Type = STORAGE_REG,
-        .As.Reg = RegIndex,
-    };
-    return Reg;
 }
-
-static void Jit_DeallocateReg(jit *Jit, int Reg)
-{
-    assert(IN_RANGE(0, Reg, 7));
-    assert(Jit->RegCount > 0);
-    Jit->Reg[Reg] = false;
-    Jit->RegCount--;
-}
-
-static bool8 Jit_AllocateSpecificReg(jit *Jit, int Reg)
-{
-    assert(IN_RANGE(0, Reg, 7));
-    assert((uint)Jit->RegCount < sizeof Jit->Reg);
-    bool8 WasAlreadyAllocated = Jit->Reg[Reg];
-    Jit->RegCount += !WasAlreadyAllocated;
-    Jit->Reg[Reg] = true;
-    return !WasAlreadyAllocated;
-}
-
-/* TODO: not hard code in rbp? */
-static jit_expression Jit_AllocateTemp(jit *Jit)
-{
-    jit_expression StackSpace = {
-        .Type = STORAGE_MEM,
-        .As.Mem = {
-            .Offset = -Jit->MemStack,
-            .BaseReg = 5, /* rbp */
-        }, 
-    };
-    Jit->MemStack += 8;
-    return StackSpace;
-}
-
-static jit_expression Jit_AllocatePersist(jit *Jit)
-{
-    jit_expression Global = {
-        .Type = STORAGE_MEM,
-        .As.Mem = {
-            .Offset = Jit->PersistCount*8,
-            .BaseReg = 0, /* rax */
-        }, 
-    };
-    Jit->PersistCount++;
-    return Global;
-}
-
-static jit_expression Jit_AllocateConst(jit *Jit, double Value)
-{
-    jit_expression Const = Jit_AllocatePersist(Jit);
-    Jit->Persist[Jit->PersistCount - 1] = Value;
-    return Const;
-}
-
-#endif 
+ 
 
 static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Expr)
 {
@@ -558,76 +507,8 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     }
     jit_function *Function = &Entry->As.Function;
 
-#if 0
-    /* TODO: not hard code in calling convention */
-    int RegCount = 8;
-    u8 PrevAllocatedRegs[8];
-    jit_expression Saved[8] = { 0 };
-    for (int i = 0; i < RegCount; i++)
-    {
-        PrevAllocatedRegs[i] = Jit->Reg[i];
-        if (Jit->Reg[i]) /* reg was allocated, push its content on stack and deallocate it */
-        {
-            Saved[i] = Jit_AllocateTemp(Jit);
-            Emit_Store(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
-            Jit_DeallocateReg(Jit, i);
-        }
-    }
 
-    if (!Expr_ParseArgs(Jit, Function))
-    {
-        goto ErrReturn;
-    }
-
-    /* call and accquire result */
-    assert(Function->Result.Type == STORAGE_REG);
-    Emit_Call(&Jit->Emitter, Function->Location);
-
-    /* TODO: unsave temps */
-    jit_expression Result = Function->Result;
-    if (!PrevAllocatedRegs[0]) /* return register was not allocated before */
-    {
-        for (int i = 1; i < RegCount; i++)
-        {
-            if (PrevAllocatedRegs[i]) /* was allocated before, load it back and reallocate it */
-            {
-                Emit_Load(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
-                Jit_AllocateSpecificReg(Jit, i);
-            }
-            else if (Jit->Reg[i]) /* allocated while parsing args but not before, then deallocate it */
-            {
-                Jit_DeallocateReg(Jit, i);
-            }
-        }
-        /* allocate the return register */
-        Jit_AllocateSpecificReg(Jit, Function->Result.As.Reg);
-        return Result;
-    }
-    else /* return register was allocated before */
-    {
-        for (int i = 0; i < RegCount; i++)
-        {
-            if (Jit->Reg[i] && !PrevAllocatedRegs[i]) /* allocated while parsing args but not before, mark it as free */
-            {
-                Jit_DeallocateReg(Jit, i);
-            }
-        }
-        /* allocate a different register from the return register */
-        jit_expression Result = Jit_AllocateReg(Jit);
-        Emit_Move(&Jit->Emitter, Result.As.Reg, Function->Result.As.Reg);
-        for (int i = 0; i < RegCount; i++)
-        {
-            if (PrevAllocatedRegs[i]) /* was allocated before, load it back */
-            {
-                Emit_Load(&Jit->Emitter, i, Saved[i].As.Mem.BaseReg, Saved[i].As.Mem.Offset);
-                Jit_AllocateSpecificReg(Jit, i);
-            }
-        }
-        return Result;
-    }
-#else
-    int ArgEnd = Function->ParamCount - 1;
-    /* spill argument and caller-saved registers */
+    /* spill registers that are in use */
     storage_spill_data Spilled = Storage_Spill(&Jit->Storage); 
     for (uint i = 0; i < Spilled.Count; i++)
     {
@@ -639,12 +520,12 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
         goto ErrReturn;
     Emit_Call(&Jit->Emitter, Function->Location);
     /* deallocate registers that were used as argument to the call */
-    for (int i = 0; i <= ArgEnd; i++)
+    for (int i = 0; i < Function->ParamCount; i++)
     {
         Storage_DeallocateReg(&Jit->Storage, i);
     }
 
-    /* unspill (reload) spilled registers */
+    /* reload spilled registers */
     Storage_Unspill(&Jit->Storage, &Spilled);
     bool8 DifferentReturnReg = false;
     jit_expression Result;
@@ -660,12 +541,9 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
         Emit_Load(&Jit->Emitter, Spilled.Reg[i], Jit->Storage.StackPtrReg, Spilled.StackOffset[i]);
     }
 
-    if (!DifferentReturnReg)
-    {
-        Result = Storage_ForceAllocateReg(&Jit->Storage, Function->ReturnReg);
-    }
-    return Result;
-#endif
+    if (DifferentReturnReg)
+        return Result;
+    return Storage_ForceAllocateReg(&Jit->Storage, Function->ReturnReg);
 ErrReturn:
     return (jit_expression) { 0 };
 }
@@ -883,7 +761,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
-        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->Storage.StackSize);
+        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->Storage.MaxStackSize);
     }
     Jit_FunctionEndScope(Jit);
 }
