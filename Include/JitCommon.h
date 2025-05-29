@@ -9,12 +9,12 @@ typedef struct jit_function_parameter jit_function_parameter;
 typedef struct jit_variable jit_variable;
 typedef struct jit_function jit_function;
 
-typedef enum jit_expression_type 
+typedef enum jit_storage_type 
 {
-    EXPR_MEM = 0,
-    EXPR_REG,
-    EXPR_CONST,
-} jit_expression_type;
+    STORAGE_MEM = 0,
+    STORAGE_REG,
+    STORAGE_CONST,
+} jit_storage_type;
 
 typedef enum jit_token_type 
 {
@@ -43,7 +43,7 @@ typedef enum jit_token_type
 
 struct jit_expression
 {
-    jit_expression_type Type;
+    jit_storage_type Storage;
     union {
         double Const;
         struct {
@@ -66,7 +66,7 @@ struct jit_function
     uint Location;
     int ParamStart;
     int ParamCount;
-    jit_expression Result;
+    int ReturnReg;
 };
 
 struct jit_token 

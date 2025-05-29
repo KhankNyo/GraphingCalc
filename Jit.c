@@ -286,8 +286,8 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
-    memset(Jit->Reg, 0, sizeof Jit->Reg);
-    Jit->RegCount = 0;
+    /* 5 = RBP, 0 = RAX */
+    Jit->Storage = Storage_Init(5, 0);
     ConsumeToken(Jit);
 }
 
@@ -345,7 +345,7 @@ static void Expr_Push(jit *Jit, const jit_expression *E)
 static void Expr_PushNumber(jit *Jit, double Number)
 {
     jit_expression Expr = {
-        .Type = EXPR_CONST,
+        .Storage = STORAGE_CONST,
         .As.Const = Number,
     };
     Expr_Push(Jit, &Expr);
@@ -354,15 +354,16 @@ static void Expr_PushNumber(jit *Jit, double Number)
 static void Expr_Neg(jit *Jit)
 {
     jit_expression *E = Expr_Peek(Jit);
-    switch (E->Type)
+    switch (E->Storage)
     {
-    case EXPR_CONST:
+    case STORAGE_CONST:
     {
         E->As.Const = -E->As.Const;
     } break;
     }
 }
 
+#if 0
 
 static jit_expression Jit_AllocateReg(jit *Jit)
 {
@@ -380,7 +381,7 @@ static jit_expression Jit_AllocateReg(jit *Jit)
     }
 
     jit_expression Reg = {
-        .Type = EXPR_REG,
+        .Type = STORAGE_REG,
         .As.Reg = RegIndex,
     };
     return Reg;
@@ -408,7 +409,7 @@ static bool8 Jit_AllocateSpecificReg(jit *Jit, int Reg)
 static jit_expression Jit_AllocateTemp(jit *Jit)
 {
     jit_expression StackSpace = {
-        .Type = EXPR_MEM,
+        .Type = STORAGE_MEM,
         .As.Mem = {
             .Offset = -Jit->MemStack,
             .BaseReg = 5, /* rbp */
@@ -421,7 +422,7 @@ static jit_expression Jit_AllocateTemp(jit *Jit)
 static jit_expression Jit_AllocatePersist(jit *Jit)
 {
     jit_expression Global = {
-        .Type = EXPR_MEM,
+        .Type = STORAGE_MEM,
         .As.Mem = {
             .Offset = Jit->PersistCount*8,
             .BaseReg = 0, /* rax */
@@ -438,27 +439,29 @@ static jit_expression Jit_AllocateConst(jit *Jit, double Value)
     return Const;
 }
 
+#endif 
+
 static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Expr)
 {
-    switch (Expr->Type)
+    switch (Expr->Storage)
     {
-    case EXPR_MEM:
+    case STORAGE_MEM:
     {
         Emit_Load(&Jit->Emitter, Reg, Expr->As.Mem.BaseReg, Expr->As.Mem.Offset);
     } break;
-    case EXPR_REG:
+    case STORAGE_REG:
     {
         Emit_Move(&Jit->Emitter, Reg, Expr->As.Reg);
     } break;
-    case EXPR_CONST:
+    case STORAGE_CONST:
     {
         /* allocate the const */
-        jit_expression Const = Jit_AllocateConst(Jit, Expr->As.Const);
+        jit_expression Const = Storage_AllocateConst(&Jit->Storage, Expr->As.Const);
         Emit_Load(&Jit->Emitter, Reg, Const.As.Mem.BaseReg, Const.As.Mem.Offset);
     } break;
     }
     return (jit_expression) {
-        .Type = EXPR_REG,
+        .Storage = STORAGE_REG,
         .As.Reg = Reg,
     };
 }
@@ -466,21 +469,21 @@ static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Exp
 
 #define DEFINE_BINARY_EXPR(name, op)\
 static void Expr_ ## name (jit *Jit, jit_expression *Lhs, const jit_expression *Rhs) {\
-    if (Lhs->Type == EXPR_CONST && Rhs->Type == EXPR_CONST) {\
+    if (Lhs->Storage == STORAGE_CONST && Rhs->Storage == STORAGE_CONST) {\
         Lhs->As.Const op ## = Rhs->As.Const;\
     } else {\
-        if (EXPR_REG != Lhs->Type) {\
-            *Lhs = Jit_CopyToReg(Jit, Jit_AllocateReg(Jit).As.Reg, Lhs);\
+        if (STORAGE_REG != Lhs->Storage) {\
+            *Lhs = Jit_CopyToReg(Jit, Storage_AllocateReg(&Jit->Storage).As.Reg, Lhs);\
         }\
-        switch (Rhs->Type) {\
-        case EXPR_MEM: {\
+        switch (Rhs->Storage) {\
+        case STORAGE_MEM: {\
             Emit_ ## name (&Jit->Emitter, Lhs->As.Reg, Rhs->As.Mem.BaseReg, Rhs->As.Mem.Offset);\
         } break;\
-        case EXPR_REG: {\
+        case STORAGE_REG: {\
             Emit_ ## name ## Reg(&Jit->Emitter, Lhs->As.Reg, Rhs->As.Reg);\
         } break;\
-        case EXPR_CONST: {\
-            jit_expression Tmp = Jit_AllocateConst(Jit, Rhs->As.Const);\
+        case STORAGE_CONST: {\
+            jit_expression Tmp = Storage_AllocateConst(&Jit->Storage, Rhs->As.Const);\
             Emit_ ## name (&Jit->Emitter, Lhs->As.Reg, Tmp.As.Mem.BaseReg, Tmp.As.Mem.Offset);\
         } break;\
         }\
@@ -494,7 +497,7 @@ DEFINE_BINARY_EXPR(Sub, -);
 DEFINE_BINARY_EXPR(Mul, *);
 DEFINE_BINARY_EXPR(Div, /);
 
-#undef DEFINE_EXPR_BINARY
+#undef DEFINE_STORAGE_BINARY
 
 static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
 {
@@ -505,27 +508,26 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
             assert(ArgCount < 4 && "TODO: more args");
             if (Jit_ParseExpr(Jit, PREC_EXPR))
             {
-                jit_expression *Arg = Expr_Pop(Jit);
-                switch (Arg->Type)
+                jit_expression *Tmp = Expr_Pop(Jit);
+                switch (Tmp->Storage)
                 {
-                case EXPR_CONST:
+                case STORAGE_CONST:
                 {
-                    jit_expression Global = Jit_AllocateConst(Jit, Arg->As.Const);
+                    jit_expression Global = Storage_AllocateConst(&Jit->Storage, Tmp->As.Const);
                     Emit_Load(&Jit->Emitter, ArgCount, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
                 } break;
-                case EXPR_MEM:
+                case STORAGE_MEM:
                 {
-                    Emit_Load(&Jit->Emitter, ArgCount, Arg->As.Mem.BaseReg, Arg->As.Mem.Offset);
+                    Emit_Load(&Jit->Emitter, ArgCount, Tmp->As.Mem.BaseReg, Tmp->As.Mem.Offset);
                 } break;
-                case EXPR_REG:
+                case STORAGE_REG:
                 {
-                    Emit_Move(&Jit->Emitter, ArgCount, Arg->As.Reg);
-                    Jit_DeallocateReg(Jit, Arg->As.Reg);
+                    Emit_Move(&Jit->Emitter, ArgCount, Tmp->As.Reg);
+                    Storage_DeallocateReg(&Jit->Storage, Tmp->As.Reg);
                 } break;
                 }
 
-                Jit->Reg[ArgCount] = true; /* mark argument register as busy */
-                Jit->RegCount++;
+                Storage_ForceAllocateReg(&Jit->Storage, ArgCount);
             }
             ArgCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
@@ -556,6 +558,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     }
     jit_function *Function = &Entry->As.Function;
 
+#if 0
     /* TODO: not hard code in calling convention */
     int RegCount = 8;
     u8 PrevAllocatedRegs[8];
@@ -577,7 +580,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     }
 
     /* call and accquire result */
-    assert(Function->Result.Type == EXPR_REG);
+    assert(Function->Result.Type == STORAGE_REG);
     Emit_Call(&Jit->Emitter, Function->Location);
 
     /* TODO: unsave temps */
@@ -622,6 +625,47 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
         }
         return Result;
     }
+#else
+    int ArgEnd = Function->ParamCount - 1;
+    /* spill argument and caller-saved registers */
+    storage_spill_data Spilled = Storage_Spill(&Jit->Storage); 
+    for (uint i = 0; i < Spilled.Count; i++)
+    {
+        Emit_Store(&Jit->Emitter, Spilled.Reg[i], Jit->Storage.StackPtrReg, Spilled.StackOffset[i]);
+    }
+
+    /* parse args and emit call */
+    if (!Expr_ParseArgs(Jit, Function))
+        goto ErrReturn;
+    Emit_Call(&Jit->Emitter, Function->Location);
+    /* deallocate registers that were used as argument to the call */
+    for (int i = 0; i <= ArgEnd; i++)
+    {
+        Storage_DeallocateReg(&Jit->Storage, i);
+    }
+
+    /* unspill (reload) spilled registers */
+    Storage_Unspill(&Jit->Storage, &Spilled);
+    bool8 DifferentReturnReg = false;
+    jit_expression Result;
+    for (uint i = 0; i < Spilled.Count; i++)
+    {
+        if (Function->ReturnReg == Spilled.Reg[i]) /* the return register is about to get unspilled */
+        {
+            /* save its value in a different register */
+            Result = Storage_AllocateReg(&Jit->Storage);
+            Emit_Move(&Jit->Emitter, Result.As.Reg, Function->ReturnReg);
+            DifferentReturnReg = true;
+        }
+        Emit_Load(&Jit->Emitter, Spilled.Reg[i], Jit->Storage.StackPtrReg, Spilled.StackOffset[i]);
+    }
+
+    if (!DifferentReturnReg)
+    {
+        Result = Storage_ForceAllocateReg(&Jit->Storage, Function->ReturnReg);
+    }
+    return Result;
+#endif
 ErrReturn:
     return (jit_expression) { 0 };
 }
@@ -734,17 +778,17 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
         } break;
         }
 
-        switch (Right->Type)
+        switch (Right->Storage)
         {
-        case EXPR_REG:
+        case STORAGE_REG:
         {
-            Jit_DeallocateReg(Jit, Right->As.Reg);
+            Storage_DeallocateReg(&Jit->Storage, Right->As.Reg);
         } break;
-        case EXPR_MEM:
+        case STORAGE_MEM:
         {
-            /* TODO: deallocate stack mem */
+            Storage_PopStack(&Jit->Storage, sizeof(double));
         } break;
-        case EXPR_CONST:
+        case STORAGE_CONST:
         {
         } break;
         }
@@ -766,18 +810,13 @@ static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
     Jit->ScopeCount++;
     Jit->LocalVarBase = Jit->LocalVarCount;
     /* reset mem stack */
-    Jit->MemStack = 0;
+    Storage_ResetTmpAndStack(&Jit->Storage);
 }
 
 static void Jit_FunctionEndScope(jit *Jit)
 {
     /* back up a scope */
     Jit->ScopeCount--;
-    /* reset memory */
-    Jit->MemStack = 0;
-    /* deallocate all regs */
-    memset(Jit->Reg, 0, sizeof Jit->Reg);
-    Jit->RegCount = 0;
 }
 
 static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_token *Parameter)
@@ -819,36 +858,32 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
         {
-            Function->Result = *Expr_Pop(Jit);
-            jit_expression *Result = &Function->Result;
+            jit_expression Result = *Expr_Pop(Jit);
 
-            int ReturnRegister = 0;
-            switch (Result->Type)
+            int ReturnReg = 0;
+            switch (Result.Storage)
             {
-            case EXPR_MEM:
+            case STORAGE_CONST:
             {
-                Emit_Load(&Jit->Emitter, ReturnRegister, Result->As.Mem.BaseReg, Result->As.Mem.Offset);
+                Result = Storage_AllocateConst(&Jit->Storage, Result.As.Const);
+                Emit_Load(&Jit->Emitter, ReturnReg, Result.As.Mem.BaseReg, Result.As.Mem.Offset);
             } break;
-            case EXPR_CONST:
+            case STORAGE_MEM:
             {
-                *Result = Jit_AllocateConst(Jit, Result->As.Const);
-                Emit_Load(&Jit->Emitter, ReturnRegister, Result->As.Mem.BaseReg, Result->As.Mem.Offset);
+                Emit_Load(&Jit->Emitter, ReturnReg, Result.As.Mem.BaseReg, Result.As.Mem.Offset);
             } break;
-            case EXPR_REG:
+            case STORAGE_REG:
             {
-                Emit_Move(&Jit->Emitter, ReturnRegister, Result->As.Reg);
+                Emit_Move(&Jit->Emitter, ReturnReg, Result.As.Reg);
             } break;
             }
 
-            *Result = (jit_expression) {
-                .Type = EXPR_REG,
-                .As.Reg = ReturnRegister,
-            };
+            Function->ReturnReg = ReturnReg;
         }
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
-        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->MemStack);
+        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->Storage.StackSize);
     }
     Jit_FunctionEndScope(Jit);
 }
@@ -866,33 +901,32 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
     {
         Definition->As.Variable.Expr = *Expr_Pop(Jit);
         jit_expression *Var = &Definition->As.Variable.Expr;
-        switch (Var->Type)
+        switch (Var->Storage)
         {
-        case EXPR_CONST: /* constant, create a persistent location for it */
+        case STORAGE_CONST:
         {
-            *Var = Jit_AllocateConst(Jit, Var->As.Const);
+            *Var = Storage_AllocateConst(&Jit->Storage, Var->As.Const);
         } break;
-        case EXPR_MEM:
+        case STORAGE_MEM:
         {
-            jit_expression PersistentStorage = Jit_AllocatePersist(Jit);
+            jit_expression Global = Storage_AllocateGlobal(&Jit->Storage);
 
-            jit_expression Tmp = Jit_AllocateReg(Jit);
+            jit_expression Tmp = Storage_AllocateReg(&Jit->Storage);
             Emit_Load(&Jit->Emitter, Tmp.As.Reg, Var->As.Mem.BaseReg, Var->As.Mem.Offset);
-            Emit_Store(&Jit->Emitter, Tmp.As.Reg, PersistentStorage.As.Mem.BaseReg, PersistentStorage.As.Mem.Offset);
-            Jit_DeallocateReg(Jit, Tmp.As.Reg);
+            Emit_Store(&Jit->Emitter, Tmp.As.Reg, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
+            Storage_DeallocateReg(&Jit->Storage, Tmp.As.Reg);
 
-            *Var = PersistentStorage;
+            *Var = Global;
         } break;
-        case EXPR_REG:
+        case STORAGE_REG:
         {
-            jit_expression PersistentStorage = Jit_AllocatePersist(Jit);
-            Emit_Store(&Jit->Emitter, Var->As.Reg, PersistentStorage.As.Mem.BaseReg, PersistentStorage.As.Mem.Offset);
-            Jit_DeallocateReg(Jit, Var->As.Reg);
+            jit_expression Global = Storage_AllocateGlobal(&Jit->Storage);
+            Emit_Store(&Jit->Emitter, Var->As.Reg, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
+            Storage_DeallocateReg(&Jit->Storage, Var->As.Reg);
 
-            *Var = PersistentStorage;
+            *Var = Global;
         } break;
         }
-        /* var is guaranteed to be in persistent storage */
     }
 }
 
@@ -943,7 +977,7 @@ Done:
     ;
     char Instruction[64] = { 0 };
     uint BytesPerLine = 10;
-    printf("memstack: %d, constcount: %d\n", Jit->MemStack, Jit->PersistCount);
+    printf("Const count: %d\n", Jit->Storage.ConstCount);
     for (u64 i = 0; i < Jit->Emitter.InstructionByteCount;)
     {
         uint InstructionBytes = 
@@ -967,9 +1001,9 @@ Done:
         i += InstructionBytes;
     }
     printf("Consts: \n");
-    for (int i = 0; i < Jit->PersistCount; i++)
+    for (int i = 0; i < Jit->Storage.ConstCount; i++)
     {
-        printf("[rax + %d] = %g\n", i*8, Jit->Persist[i]);
+        printf("[rax + %d] = %g\n", Jit->Storage.ConstOffset[i], Jit->Storage.Consts[i]);
     }
 
     if (Jit->Error)

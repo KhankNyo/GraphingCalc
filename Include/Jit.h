@@ -1,10 +1,10 @@
 #ifndef JIT_H
 #define JIT_H
 
-#include "Common.h"
 #include "JitCommon.h"
 #include "Emitter.h"
 #include "DefTable.h"
+#include "Storage.h"
 
 typedef struct jit_result
 {
@@ -34,12 +34,8 @@ typedef struct jit
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
 
-    bool8 Reg[8];
-    int RegCount;
-    i32 MemStack;
-    int PersistCount;
-    double Persist[256];
     jit_emitter Emitter;
+    jit_storage_manager Storage;
 } jit;
 
 jit Jit_Init(void);

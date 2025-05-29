@@ -248,7 +248,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
         }
 
         Params[i].Expr = (jit_expression) {
-            .Type = EXPR_MEM,
+            .Storage = STORAGE_MEM,
             .As.Mem = {
                 .Offset = Displacement,
                 .BaseReg = RBP
