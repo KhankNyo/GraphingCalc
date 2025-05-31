@@ -37,7 +37,6 @@ typedef enum jit_token_type
     TOK_NEWLINE,
     TOK_COMMA, 
 
-    TOK_DEF,
     TOK_EOF,
 } jit_token_type;
 

@@ -367,9 +367,7 @@ graph_state Graph_OnEntry(void)
     Graph_UpdateScaling(&State, ScrWidth);
 
     sJit = Jit_Init();
-    const char *Expr = 
-        "def main(x) = x*x*x\n"
-        "\n";
+    const char *Expr = "\n";
     sResult = Jit_Compile(&sJit, Expr);
     if (sResult.Code)
     {
@@ -472,6 +470,10 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     int GraphThickness = 3;
 
     Graph_DrawBackground(State, Ctx);
+
+
+    if (sResult.ErrMsg)
+        return;
 
 
     /* function graph */

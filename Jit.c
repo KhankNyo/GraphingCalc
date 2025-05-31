@@ -129,10 +129,6 @@ static jit_token ParseIdentifier(jit *Jit)
     }
 
     jit_token Identifier = CreateToken(Jit, TOK_IDENTIFIER);
-    if (STREQU("def", Identifier.Str))
-    {
-        Identifier.Type = TOK_DEF;
-    }
     return Identifier;
 #undef STREQU
 }
@@ -449,6 +445,7 @@ DEFINE_BINARY_EXPR(Div, /);
 
 static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
 {
+    /* Consumed '(' */
     int ArgCount = 0;
     if (NextToken(Jit).Type != TOK_RPAREN)
     {
@@ -554,7 +551,7 @@ static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
     jit_variable *Variable = Jit_FindVariable(Jit, VarName);
     if (NULL == Variable)
     {
-        Error(Jit, "Undefined variable.");
+        Error(Jit, "Undefined variable: '%.*s'.", VarName->Str.Len, VarName->Str.Ptr);
         return (jit_expression) { 0 };
     }
     return Variable->Expr;
@@ -865,37 +862,23 @@ void Jit_Destroy(jit *Jit)
 jit_result Jit_Compile(jit *Jit, const char *Expr)
 {
     Jit_Reset(Jit, Expr);
-    while (CurrToken(Jit).Type != TOK_EOF)
-    {
+    do {
         /* definition */
-        if (ConsumeIfNextTokenIs(Jit, TOK_DEF))
+        ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected a variable or function declaration.");
+        jit_token Identifier = CurrToken(Jit);
+        if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
         {
-            ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected an identifier.");
-            jit_token Identifier = CurrToken(Jit);
-            if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
-            {
-                FunctionDecl(Jit, Identifier);
-            }
-            else if (NextToken(Jit).Type == TOK_EQUAL)
-            {
-                VariableDecl(Jit, Identifier);
-            }
-            else
-            {
-                Error(Jit, "Expected function name.");
-            }
+            FunctionDecl(Jit, Identifier);
+        }
+        else if (ConsumeOrError(Jit, TOK_EQUAL, "Expected '='."))
+        {
+            VariableDecl(Jit, Identifier);
         }
 
-        if (!ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
-        {
-            ConsumeOrError(Jit, TOK_EOF, "Expected new line.");
-        }
-
-        if (Jit->Error)
-        {
-            break;
-        }
-    }
+        /* skip all newlines */
+        while (!Jit->Error && ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
+        {}
+    } while (!Jit->Error && TOK_EOF != NextToken(Jit).Type);
 
     Jit_Disassemble(Jit);
     if (Jit->Error)
