@@ -1,3 +1,4 @@
+#include "Platform.h"
 #include "Jit.h"
 #include "DefTable.h"
 #include "Emitter.h"
@@ -286,10 +287,9 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
-    /* 5 = RBP, 0 = RAX */
-    Jit->Storage = Storage_Init(5, 0);
     Jit->SignLocation = Storage_AllocateConst(&Jit->Storage, -0.0);
     ConsumeToken(Jit);
+    Storage_ResetTmpAndStack(&Jit->Storage);
 }
 
 
@@ -603,6 +603,7 @@ static bool8 Jit_ParseUnary(jit *Jit)
     } break;
     default:
     {
+        printf("token: '%.*s'\n", Left.Str.Len, Left.Str.Ptr);
         Error(Jit, "Expected an expression.");
     } break;
     }
@@ -808,13 +809,60 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
 }
 
 
+static void Jit_Disassemble(jit *Jit)
+{
+    char Instruction[64] = { 0 };
+    uint BytesPerLine = 10;
+    printf("Const count: %d\n", Jit->Storage.ConstCount);
+    for (u64 i = 0; i < Jit->Emitter.BufferSize;)
+    {
+        uint InstructionBytes = 
+            DisasmSingleInstruction(i, Jit->Emitter.Buffer + i, Jit->Emitter.BufferSize - i, Instruction);
+
+
+        printf("%08x:  ", (u32)i);
+        uint k;
+        for (k = 0; k < InstructionBytes; k++)
+        {
+            printf("%02x ", Jit->Emitter.Buffer[i + k]);
+        }
+        while (k < BytesPerLine)
+        {
+            printf("   ");
+            k++;
+        }
+
+        printf("%s\n", Instruction);
+
+        i += InstructionBytes;
+    }
+    printf("Consts: \n");
+    for (int i = 0; i < Jit->Storage.ConstCount; i++)
+    {
+        printf("Global[%d] = %g\n", Jit->Storage.ConstOffset[i]/8, Jit->Storage.Consts[i]);
+    }
+}
+
+
 jit Jit_Init(void)
 {
-    jit Jit = { 0 };
+    uint MemCapacity = 1024*1024;
+    void *Memory = Platform_AllocateMemory(MemCapacity);
+    jit Jit = {
+        .Storage = Storage_Init(5, 1), /* RBP, RCX */
+        .Emitter = Emitter_Init(Memory, MemCapacity),
+    };
     return Jit;
 }
 
-jit_result Jit_Evaluate(jit *Jit, const char *Expr)
+void Jit_Destroy(jit *Jit)
+{
+}
+
+
+
+
+jit_result Jit_Compile(jit *Jit, const char *Expr)
 {
     Jit_Reset(Jit, Expr);
     while (CurrToken(Jit).Type != TOK_EOF)
@@ -837,69 +885,43 @@ jit_result Jit_Evaluate(jit *Jit, const char *Expr)
                 Error(Jit, "Expected function name.");
             }
         }
-        /* expression */
-        else 
-        {
-            Jit_ParseExpr(Jit, PREC_EXPR);
-            goto Done;
-        }
 
         if (!ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
         {
             ConsumeOrError(Jit, TOK_EOF, "Expected new line.");
         }
-    }
 
-Done:
-    ;
-    char Instruction[64] = { 0 };
-    uint BytesPerLine = 10;
-    printf("Const count: %d\n", Jit->Storage.ConstCount);
-    for (u64 i = 0; i < Jit->Emitter.InstructionByteCount;)
-    {
-        uint InstructionBytes = 
-            DisasmSingleInstruction(i, Jit->Emitter.InstructionBuffer + i, Jit->Emitter.InstructionByteCount - i, Instruction);
-
-
-        printf("%08x:  ", (u32)i);
-        uint k;
-        for (k = 0; k < InstructionBytes; k++)
+        if (Jit->Error)
         {
-            printf("%02x ", Jit->Emitter.InstructionBuffer[i + k]);
+            break;
         }
-        while (k < BytesPerLine)
-        {
-            printf("   ");
-            k++;
-        }
-
-        printf("%s\n", Instruction);
-
-        i += InstructionBytes;
-    }
-    printf("Consts: \n");
-    for (int i = 0; i < Jit->Storage.ConstCount; i++)
-    {
-        printf("[rax + %d] = %g\n", Jit->Storage.ConstOffset[i], Jit->Storage.Consts[i]);
     }
 
+    Jit_Disassemble(Jit);
     if (Jit->Error)
     {
         return (jit_result) {
-            .Valid = false,
-            .As.ErrMsg = Jit->ErrMsg,
+            .ErrMsg = Jit->ErrMsg,
         };
     }
-    else
-    {
-        return (jit_result) {
-            .Valid = true,
-            .As.Number = Jit->ExprStack[0].As.Const,
-        };
-    } 
+    return (jit_result) {
+        .Code = Jit->Emitter.Buffer,
+        .CodeSize = Jit->Emitter.BufferSize,
+    };
 }
 
-void Jit_Destroy(jit *Jit)
+typedef double (*jit_code)(double Param);
+
+double Jit_Execute(jit *Jit, jit_result *Result, double Param)
 {
+    (void)Jit;
+    Platform_EnableExecution(Result->Code, Result->CodeSize);
+    jit_code Code = Result->Code;
+    double ReturnValue = Code(Param);
+    Platform_DisableExecution(Result->Code, Result->CodeSize);
+    return ReturnValue;
 }
+
+
+
 

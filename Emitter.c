@@ -73,12 +73,12 @@ static const u8 sPrologue[] = {
 
 static int Emit(jit_emitter *Emitter, int Count, ...)
 {
-    int InstructionOffset = Emitter->InstructionByteCount;
+    int InstructionOffset = Emitter->BufferSize;
     va_list Args;
     va_start(Args, Count);
-    for (int i = 0; i < Count && (uint)Emitter->InstructionByteCount < sizeof(Emitter->InstructionBuffer); i++)
+    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
     {
-        Emitter->InstructionBuffer[Emitter->InstructionByteCount++] = va_arg(Args, uint);
+        Emitter->Buffer[Emitter->BufferSize++] = va_arg(Args, uint);
     }
     va_end(Args);
     return InstructionOffset;
@@ -86,10 +86,10 @@ static int Emit(jit_emitter *Emitter, int Count, ...)
 
 static int EmitArray(jit_emitter *Emitter, const u8 Array[], int Count)
 {
-    int InstructionOffset = Emitter->InstructionByteCount;
-    for (int i = 0; i < Count && (uint)Emitter->InstructionByteCount < sizeof(Emitter->InstructionBuffer); i++)
+    int InstructionOffset = Emitter->BufferSize;
+    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
     {
-        Emitter->InstructionBuffer[Emitter->InstructionByteCount++] = Array[i];
+        Emitter->Buffer[Emitter->BufferSize++] = Array[i];
     }
     return InstructionOffset;
 }
@@ -141,6 +141,21 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 
 
 
+jit_emitter Emitter_Init(void *Buffer, uint BufferCapacity)
+{
+    jit_emitter Emitter = { 
+        .Buffer = Buffer,
+        .BufferCapacity = BufferCapacity,
+    };
+    return Emitter;
+}
+
+void Emitter_Reset(jit_emitter *Emitter)
+{
+    Emitter->BufferSize = 0;
+}
+
+
 
 void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg)
 {
@@ -161,18 +176,18 @@ void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
 void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
 {
     /* movq dst, [base + offset] */
-    u8 *Curr = Emitter->InstructionBuffer + Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
+    u8 *Curr = Emitter->Buffer + Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
     Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
-    const u8 *Next = Emitter->InstructionBuffer + Emitter->InstructionByteCount;
+    const u8 *Next = Emitter->Buffer + Emitter->BufferSize;
 
     /* if last instruction was a store to the same location that we'll be loading from, 
      * omit the load */
     uint InstructionLength = Next - Curr;
     u8 *Prev = Curr - InstructionLength;
-    if (Emitter->InstructionByteCount >= 2*InstructionLength
+    if (Emitter->BufferSize >= 2*InstructionLength
     && MemEqu(Prev, Curr, InstructionLength))
     {
-        Emitter->InstructionByteCount -= InstructionLength;
+        Emitter->BufferSize -= InstructionLength;
         return;
     }
     else 
@@ -243,7 +258,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
      * movsd [rbp + i*8], xmm(i) 
      * ...
      * */
-    while (Emitter->InstructionByteCount % 0x10 != 0)
+    while (Emitter->BufferSize % 0x10 != 0)
     {
         Emit(Emitter, 1, 0x90); /* nop */
     }
@@ -278,8 +293,8 @@ void Emit_FunctionExit(jit_emitter *Emitter)
 
 void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
 {
-    assert(FunctionLocation + sizeof(sPrologue) <= sizeof(Emitter->InstructionBuffer));
-    u8 *Location = Emitter->InstructionBuffer 
+    assert(FunctionLocation + sizeof(sPrologue) <= Emitter->BufferCapacity);
+    u8 *Location = Emitter->Buffer 
         + FunctionLocation 
         + sizeof(sPrologue) - 4;
     MemCpy(Location, &Value, 4);
@@ -288,7 +303,7 @@ void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
     /* call rel32 */
-    i32 Rel32 = FunctionLocation - (Emitter->InstructionByteCount + 5);
+    i32 Rel32 = FunctionLocation - (Emitter->BufferSize + 5);
     Emit(Emitter, 1, 0xE8);
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
 }

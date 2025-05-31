@@ -24,11 +24,6 @@
 
 
 
-static double Fn(double x)
-{
-    return x*x;
-}
-
 
 
 static u32 RGB(u8 r, u8 g, u8 b)
@@ -338,7 +333,8 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
 }
 
 
-
+static jit_result sResult;
+static jit sJit;
 graph_state Graph_OnEntry(void)
 {
     int ScrWidth = 1080, ScrHeight = 720;
@@ -370,21 +366,21 @@ graph_state Graph_OnEntry(void)
     };
     Graph_UpdateScaling(&State, ScrWidth);
 
-    jit Jit = Jit_Init();
+    sJit = Jit_Init();
     const char *Expr = 
-        "def g(x) = 2*x\n"
-        "def f(x) = -g(x) - -x\n"
+        "def main(x) = x*x*x\n"
         "\n";
-    jit_result Result = Jit_Evaluate(&Jit, Expr);
-    if (Result.Valid)
+    sResult = Jit_Compile(&sJit, Expr);
+    if (sResult.Code)
     {
-        printf("Result: %f\n", Result.As.Number);
+        printf("Compilation OK.\n");
+        double Result = Jit_Execute(&sJit, &sResult, 4);
+        printf("Result = %f\n", Result);
     }
     else
     {
-        printf("Error: %s", Result.As.ErrMsg);
+        printf("Error: %s\n", sResult.ErrMsg);
     }
-    Jit_Destroy(&Jit);
 
     return State;
 }
@@ -480,11 +476,11 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
 
     /* function graph */
     double PrevX = GraphLeft;
-    double PrevY = Fn(PrevX);
+    double PrevY = Jit_Execute(&sJit, &sResult, (PrevX));
     for (int x = 1; x < Width; x++)
     {
         double X = GRAPH_FROM_SCR_X(x);
-        double Y = Fn(X);
+        double Y = Jit_Execute(&sJit, &sResult, (PrevX));
         if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
         || IN_RANGE(GraphBottom, Y, GraphTop))
         {

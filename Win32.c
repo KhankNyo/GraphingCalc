@@ -280,4 +280,31 @@ double Platform_GetFrameTimeMs(void)
     return sWin32_FrameTimeMs;
 }
 
+void *Platform_AllocateMemory(uint Size)
+{
+    SYSTEM_INFO Info;
+    GetSystemInfo(&Info);
+    if (Size % Info.dwPageSize)
+    {
+        /* round to highest page size */
+        Size = (Size + Info.dwPageSize) / Info.dwPageSize * Info.dwPageSize;
+    }
+    void *Ptr = VirtualAlloc(NULL, Size, MEM_COMMIT, PAGE_READWRITE);
+    assert(Ptr && "Memory allocation failed");
+
+    return Ptr;
+}
+
+void Platform_EnableExecution(void *Memory, uint ByteCount)
+{
+    DWORD OldPerms;
+    VirtualProtect(Memory, ByteCount, PAGE_EXECUTE_READ, &OldPerms);
+}
+
+void Platform_DisableExecution(void *Memory, uint ByteCount)
+{
+    DWORD OldPerms;
+    VirtualProtect(Memory, ByteCount, PAGE_READWRITE, &OldPerms);
+}
+
 

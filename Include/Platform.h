@@ -91,7 +91,9 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse);
 void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx);
 
 /* misc */
-u32 Platform_RGB(u8 r, u8 g, u8 b);
+void *Platform_AllocateMemory(uint Size);
+void Platform_EnableExecution(void *Memory, uint ByteCount);
+void Platform_DisableExecution(void *Memory, uint ByteCount);
 
 
 #endif /* PLATFORM_H */

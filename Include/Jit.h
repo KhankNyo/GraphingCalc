@@ -6,13 +6,12 @@
 #include "DefTable.h"
 #include "Storage.h"
 
+
 typedef struct jit_result
 {
-    bool8 Valid;
-    union {
-        const char *ErrMsg;
-        double Number;
-    } As;
+    const char *ErrMsg;
+    void *Code;
+    uint CodeSize;
 } jit_result;
 
 typedef struct jit 
@@ -35,14 +34,15 @@ typedef struct jit
     int ExprStackSize, ExprStackCapacity;
     jit_expression SignLocation;
 
-
     jit_emitter Emitter;
     jit_storage_manager Storage;
 } jit;
 
 jit Jit_Init(void);
-jit_result Jit_Evaluate(jit *Jit, const char *Expr);
 void Jit_Destroy(jit *Jit);
+
+jit_result Jit_Compile(jit *Jit, const char *Expr);
+double Jit_Execute(jit *Jit, jit_result *Code, double Param);
 
 
 

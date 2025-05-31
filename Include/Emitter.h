@@ -7,9 +7,13 @@
 
 typedef struct jit_emitter 
 {
-    u8 InstructionBuffer[256];
-    uint InstructionByteCount;
+    u8 *Buffer;
+    uint BufferSize;
+    uint BufferCapacity;
 } jit_emitter;
+
+jit_emitter Emitter_Init(void *Buffer, uint BufferCapacity);
+void Emitter_Reset(jit_emitter *Emitter);
 
 uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64]);
 
