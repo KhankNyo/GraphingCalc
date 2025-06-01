@@ -368,7 +368,8 @@ graph_state Graph_OnEntry(void)
 
     sJit = Jit_Init();
     const char *Expr = 
-        "f(x) = x*x";
+        "f(x) = x*x\n"
+        "g(x, y) = f(x, y)\n";
     sResult = Jit_Compile(&sJit, Expr);
     if (sResult.Code)
     {

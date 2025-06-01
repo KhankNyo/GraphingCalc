@@ -163,7 +163,6 @@ Out:
 
 static jit_token NewlineToken(jit *Jit)
 {
-    ///Jit->Start = Jit->End;
     jit_token Tok = CreateToken(Jit, TOK_NEWLINE);
     Jit->Line++;
     Jit->Offset = 1;
@@ -460,14 +459,16 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
             ArgCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
-    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after arguments.");
+    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument%s.", 
+        ArgCount > 1? "s" : ""
+    );
 
     /* check arg count */
     if (ArgCount != Fn->ParamCount)
     {
         Error_WithMarker(&Jit->Error, &Jit->Curr, 
-            "Expected %d arguments but got %d instead.", 
-            Fn->ParamCount, Fn->Str.Len, Fn->Str.Ptr, ArgCount
+            "Expected %d argument%s but got %d instead.", 
+            Fn->ParamCount, Fn->ParamCount > 1? "s" : "", ArgCount
         );
     }
     Error_PopMarker(&Jit->Error);
