@@ -32,6 +32,7 @@ typedef struct jit
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
 
+    int VarDeclEnd;
     jit_emitter Emitter;
     jit_storage_manager Storage;
     jit_error Error;
@@ -42,6 +43,7 @@ void Jit_Destroy(jit *Jit);
 
 jit_result Jit_Compile(jit *Jit, const char *Expr);
 double Jit_Execute(jit *Jit, jit_result *Code, double Param);
+double Jit_ExecuteFunction(jit *Jit, jit_function *Fn, double Param);
 
 
 

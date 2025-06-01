@@ -263,11 +263,13 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
+    Jit->VarDeclEnd = -1;
     ConsumeToken(Jit);
 
-    Storage_ResetTmpAndStack(&Jit->Storage);
+    Storage_Reset(&Jit->Storage);
     Error_Reset(&Jit->Error);
     Emitter_Reset(&Jit->Emitter);
+    DefTable_Reset(&Jit->Global);
 }
 
 
@@ -283,8 +285,8 @@ static jit_variable *Jit_FindVariable(jit *Jit, const jit_token *VarName)
         for (int i = Jit->LocalVarBase; i < Jit->LocalVarCount; i++)
         {
             jit_variable *Variable = &Jit->LocalVars[i];
-            if (Len == Variable->Str.Len 
-            && StrEqu(Ptr, Variable->Str.Ptr, Len))
+            if (Len == Variable->Dbg.Str.Len 
+            && StrEqu(Ptr, Variable->Dbg.Str.Ptr, Len))
             {
                 return Variable;
             }
@@ -520,7 +522,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     /* parse args and emit call */
     if (!Expr_ParseArgs(Jit, Function))
         goto ErrReturn;
-    Emit_Call(&Jit->Emitter, Function->Location);
+    Emit_Call(&Jit->Emitter, Function->Dbg.Location);
     /* deallocate registers that were used as argument to the call */
     for (int i = 0; i < Function->ParamCount; i++)
     {
@@ -703,7 +705,7 @@ static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_to
 {
     assert(Jit->LocalVarCount + 1 < Jit->LocalVarCapacity && "TODO: Dynamic capacity.");
     Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
-        .Str = Parameter->Str,
+        .Dbg.Str = Parameter->Str,
     };
     Jit->LocalVarCount++;
     Function->ParamCount++;
@@ -733,7 +735,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
         /* emit function entry code */
-        Function->Location = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
+        Function->Dbg.Location = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
 
         /* function body */
         if (Jit_ParseExpr(Jit, PREC_EXPR))
@@ -762,9 +764,18 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
-        Emit_PatchStackSize(&Jit->Emitter, Function->Location, Jit->Storage.MaxStackSize);
+        Function->Dbg.ByteCount = Jit->Emitter.BufferSize - Function->Dbg.Location;
+        Emit_PatchStackSize(&Jit->Emitter, Function->Dbg.Location, Jit->Storage.MaxStackSize);
     }
     Jit_FunctionEndScope(Jit);
+}
+
+
+static void Jit_PatchJump(jit *Jit)
+{
+    if (-1 == Jit->VarDeclEnd)
+        return;
+    Emitter_PatchJump(&Jit->Emitter, Jit->VarDeclEnd);
 }
 
 static void VariableDecl(jit *Jit, jit_token Identifier)
@@ -774,8 +785,10 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
 
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
+    Jit_PatchJump(Jit);
 
     /* parse expr */
+    Definition->As.Common.Location = Jit->Emitter.BufferSize;
     if (Jit_ParseExpr(Jit, PREC_EXPR))
     {
         Definition->As.Variable.Expr = *Expr_Pop(Jit);
@@ -806,28 +819,27 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
             *Var = Global;
         } break;
         }
+
+        Jit->VarDeclEnd = Emit_Jump(&Jit->Emitter);
+        Definition->As.Common.ByteCount = Jit->VarDeclEnd - Definition->As.Common.Location;
     }
 }
 
 
-static void Jit_Disassemble(jit *Jit)
+static void Jit_DisassembleCode(u8 *Buffer, uint Start, uint End, uint BytesPerLine)
 {
-    char Instruction[64] = { 0 };
-    uint BytesPerLine = 10;
-    printf("=================================\n");
-    printf("         x64 disassembly:        \n");
-    printf("=================================\n");
-    for (u64 i = 0; i < Jit->Emitter.BufferSize;)
+    char Instruction[64];
+    for (u64 i = Start; i < End;)
     {
         uint InstructionBytes = 
-            DisasmSingleInstruction(i, Jit->Emitter.Buffer + i, Jit->Emitter.BufferSize - i, Instruction);
+            DisasmSingleInstruction(i, Buffer + i, End - i, Instruction);
 
 
-        printf("%08x:  ", (u32)i);
+        printf("%8x:  ", (u32)i);
         uint k;
         for (k = 0; k < InstructionBytes; k++)
         {
-            printf("%02x ", Jit->Emitter.Buffer[i + k]);
+            printf("%02x ", Buffer[i + k]);
         }
         while (k < BytesPerLine)
         {
@@ -839,6 +851,32 @@ static void Jit_Disassemble(jit *Jit)
 
         i += InstructionBytes;
     }
+}
+
+static void Jit_Disassemble(jit *Jit)
+{
+    uint BytesPerLine = 10;
+    printf("=================================\n");
+    printf("         x64 disassembly:        \n");
+    printf("=================================\n");
+#if 1
+    def_table_entry *i = Jit->Global.Head;
+    const char *Type[] = { 
+        [TYPE_VARIABLE] = "variable",
+        [TYPE_FUNCTION] = "function"
+    };
+    while (i)
+    {
+        jit_debug_info Dbg = i->As.Common;
+
+        printf("\n<%08x>: (%s) %.*s\n", Dbg.Location, Type[i->Type], Dbg.Str.Len, Dbg.Str.Ptr);
+        Jit_DisassembleCode(Jit->Emitter.Buffer, Dbg.Location, Dbg.Location + Dbg.ByteCount, BytesPerLine);
+        i = i->Next;
+    }
+#else
+    Jit_DisassembleCode(Jit->Emitter.Buffer, 0, Jit->Emitter.BufferSize, BytesPerLine);
+#endif
+
     printf("Consts: \n");
     for (uint i = 0; i < Jit->Storage.GlobalSize; i++)
     {
@@ -846,16 +884,26 @@ static void Jit_Disassemble(jit *Jit)
     }
 }
 
+static u32 Jit_Hash(const char *Str, int StrLen)
+{
+    if (0 == StrLen)
+        return 0;
+    return (u32)(Str[0] & 0x7F) << 8 | Str[StrLen - 1];
+}
+
 
 jit Jit_Init(void)
 {
-    uint ProgramMemCapacity = 128*1024;
-    uint GlobalMemCapacity = 4096;
+    uint ProgramMemCapacity = 32*1024;
+    uint GlobalMemCapacity = 2*1024;
+    uint DefTableCapacity = 4*1024;
     void *ProgramMemory = Platform_AllocateMemory(ProgramMemCapacity);
     double *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(double));
+    def_table_entry *DefTableArray = Platform_AllocateMemory(DefTableCapacity * sizeof(def_table_entry));
     jit Jit = {
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
         .Emitter = Emitter_Init(ProgramMemory, ProgramMemCapacity),
+        .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
     };
     return Jit;
 }
@@ -870,6 +918,7 @@ void Jit_Destroy(jit *Jit)
 jit_result Jit_Compile(jit *Jit, const char *Expr)
 {
     Jit_Reset(Jit, Expr);
+    Emit_FunctionEntry(&Jit->Emitter, NULL, 0);
     do {
         /* definition */
         ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected a variable or function declaration.");
@@ -878,7 +927,7 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
         {
             FunctionDecl(Jit, Identifier);
         }
-        else if (ConsumeOrError(Jit, TOK_EQUAL, "Expected '='."))
+        else 
         {
             VariableDecl(Jit, Identifier);
         }
@@ -888,17 +937,24 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
         {}
     } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
 
-    Jit_Disassemble(Jit);
-    if (Jit->Error.Available)
+    if (!Jit->Error.Available)
+    {
+        Jit_PatchJump(Jit);
+        Emit_FunctionExit(&Jit->Emitter);
+
+        Jit_Disassemble(Jit);
+
+        return (jit_result) {
+            .Code = Jit->Emitter.Buffer,
+            .CodeSize = Jit->Emitter.BufferSize,
+        };
+    }
+    else
     {
         return (jit_result) {
             .ErrMsg = Jit->Error.Msg,
         };
     }
-    return (jit_result) {
-        .Code = Jit->Emitter.Buffer,
-        .CodeSize = Jit->Emitter.BufferSize,
-    };
 }
 
 typedef double (*jit_code)(double *GlobalPtr, double Param);
@@ -909,6 +965,18 @@ double Jit_Execute(jit *Jit, jit_result *Result, double Param)
     jit_code Code = Result->Code;
     double ReturnValue = Code(Jit->Storage.GlobalMemory, Param);
     Platform_DisableExecution(Result->Code, Result->CodeSize);
+    return ReturnValue;
+}
+
+double Jit_ExecuteFunction(jit *Jit, jit_function *Fn, double Param)
+{
+    void *Code = Jit->Emitter.Buffer + Fn->Dbg.Location;
+    uint CodeSize = Fn->Dbg.ByteCount;
+
+    Platform_EnableExecution(Code, CodeSize);
+    double ReturnValue = ((jit_code)Code)(Jit->Storage.GlobalMemory, Param);
+    Platform_DisableExecution(Code, CodeSize);
+
     return ReturnValue;
 }
 

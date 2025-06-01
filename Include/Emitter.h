@@ -51,6 +51,8 @@ void Emit_FunctionExit(jit_emitter *Emitter);
 void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value);
 
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
+int Emit_Jump(jit_emitter *Emitter);
+void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation);
 
 #endif /* EMITTER_H */
 

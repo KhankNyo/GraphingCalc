@@ -2,15 +2,10 @@
 #include "DefTable.h"
 
 
-#define EMPTY(p_e) (NULL == (p_e)->As.Str.Ptr)
-#define DELETED(p_e) (0 == (p_e)->As.Str.Len)
-#define TableSize(p_t) (uint)STATIC_ARRAY_SIZE((p_t)->Array)
-
-static u32 DefTable_Hash(const char *Str, int StrLen)
-{
-    return (Str[0] & 0x1F) | (Str[StrLen - 1] << 6);
-}
-
+#define EMPTY(p_e) (NULL == (p_e)->As.Common.Str.Ptr)
+#define DELETED(p_e) (0 == (p_e)->As.Common.Str.Len)
+#define TableCapacity(p_t) (uint)(p_t)->Capacity
+#define DefTable_Hash(s, l) (Table->HashFn(s, l))
 
 
 static def_table_entry *GetArray(def_table *Table)
@@ -20,29 +15,44 @@ static def_table_entry *GetArray(def_table *Table)
 
 static u32 NextIndex(const def_table *Table, u32 i)
 {
-    return (i + 1) % TableSize(Table);
+    return (i + 1) & (TableCapacity(Table) - 1);
 }
 
 
 
-def_table DefTable_Init(void)
+def_table DefTable_Init(def_table_entry *Array, uint Capacity, def_table_hash_fn HashFn)
 {
-    return (def_table) { 0 };
+    assert(Capacity % 2 == 0 && "bad capacity (should be pow of 2)");
+    return (def_table) { 
+        .Array = Array,
+        .Capacity = Capacity,
+        .HashFn = HashFn,
+    };
 }
 
-void DefTable_Destroy(def_table *Table)
+void DefTable_Reset(def_table *Table)
 {
-    (void)Table;
+    Table->Count = 0;
+    def_table_entry *i = Table->Head;
+    while (i)
+    {
+        def_table_entry *Next = i->Next;
+        *i = (def_table_entry) { 0 };
+        i = Next;
+    }
+
+    Table->Head = NULL;
+    Table->Tail = NULL;
 }
 
 def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, def_table_entry_type Type)
 {
-    if (Table->Count == TableSize(Table))
+    if (Table->Count == TableCapacity(Table))
         return NULL; /* table is full */
 
     def_table_entry *Array = GetArray(Table);
     u32 Hash = DefTable_Hash(Str, StrLen);
-    u32 Index = Hash % TableSize(Table);
+    u32 Index = Hash & (TableCapacity(Table) - 1);
     while (1)
     {
         def_table_entry *Entry = &Array[Index];
@@ -51,11 +61,24 @@ def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, 
             *Entry = (def_table_entry) {
                 .Type = Type,
                 .Hash = Hash,
-                .As.Str = {
+                .As.Common.Str = {
                     .Ptr = Str,
                     .Len = StrLen,
                 },
             };
+
+            if (!Table->Tail)
+            {
+                assert(!Table->Head && "bad linked list");
+                Table->Head = Entry;
+                Table->Tail = Entry;
+            }
+            else
+            {
+                Table->Tail->Next = Entry;
+                Entry->Prev = Table->Tail;
+                Table->Tail = Entry;
+            }
             Table->Count++;
             return Entry;
         }
@@ -67,8 +90,8 @@ def_table_entry *DefTable_Find(def_table *Table, const char *Str, int StrLen, de
 {
     def_table_entry *Array = GetArray(Table);
     u32 Hash = DefTable_Hash(Str, StrLen);
-    u32 Index = Hash % TableSize(Table);
-    for (uint i = 0; i < TableSize(Table); i++)
+    u32 Index = Hash & (TableCapacity(Table) - 1);
+    for (uint i = 0; i < TableCapacity(Table); i++)
     {
         def_table_entry *Entry = &Array[Index];
         if (EMPTY(Entry))
@@ -79,8 +102,8 @@ def_table_entry *DefTable_Find(def_table *Table, const char *Str, int StrLen, de
         }
         else if (Hash == Entry->Hash 
         && Type == Entry->Type
-        && StrLen == Entry->As.Str.Len 
-        && StrEqu(Str, Entry->As.Str.Ptr, StrLen))
+        && StrLen == Entry->As.Common.Str.Len 
+        && StrEqu(Str, Entry->As.Common.Str.Ptr, StrLen))
         {
             /* found entry */
             return Entry;
@@ -97,7 +120,20 @@ bool8 DefTable_Delete(def_table *Table, const char *Str, int StrLen, def_table_e
     if (!Entry)
         return false;
 
-    Entry->As.Str.Len = 0;
+    def_table_entry *Prev = Entry->Prev;
+    def_table_entry *Next = Entry->Next;
+    if (!Prev) /* removing head node */
+        Table->Head = Next;
+    else
+        Prev->Next = Next;
+    if (!Next) /* removing tail node */
+        Table->Tail = Prev;
+    else
+        Next->Prev = Prev;
+    Entry->Next = NULL;
+    Entry->Prev = NULL;
+
+    Entry->As.Common.Str.Len = 0;
     return true;
 }
 

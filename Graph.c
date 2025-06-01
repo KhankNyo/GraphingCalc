@@ -340,7 +340,7 @@ graph_state Graph_OnEntry(void)
     int ScrWidth = 1080, ScrHeight = 720;
     double AspectRatio = (double)ScrHeight / ScrWidth;
     Platform_SetScreenBufferDimensions(ScrWidth, ScrHeight);
-    Platform_SetFrameTimeTarget(1000.0 / 144);
+    Platform_SetFrameTimeTarget(1000.0 / 120);
 
     graph_state State = {
         .GraphLeft = -10,
@@ -368,8 +368,10 @@ graph_state Graph_OnEntry(void)
 
     sJit = Jit_Init();
     const char *Expr = 
-        "f(x) = x + 1\n"
-        "g(x0, x1, x2, x3, x4, x5, x6) = x0 + x1 + x2 + x3 + x4 + x5 + x6 + 2\n"
+        "m = 3\n"
+        "f(x) = x + m\n"
+        "g(x) = 3*x\n"
+        "h(x) = x*x\n"
         ;
     sResult = Jit_Compile(&sJit, Expr);
     if (sResult.Code)
@@ -478,25 +480,40 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     if (sResult.ErrMsg)
         return;
 
+    Jit_Execute(&sJit, &sResult, 0);
+    u32 Colors[4] = {
+        RGB(0xFF, 0, 0x80),
+        RGB(0, 0xFF, 0x80),
+        RGB(0, 0x80, 0xFF),
+        GraphColor
+    };
+    uint k = 0;
 
     /* function graph */
-    double PrevX = GraphLeft;
-    double PrevY = Jit_Execute(&sJit, &sResult, (PrevX));
-    for (int x = 1; x < Width; x++)
+    def_table_entry *i = sJit.Global.Head;
+    while (i)
     {
-        double X = GRAPH_FROM_SCR_X(x);
-        double Y = Jit_Execute(&sJit, &sResult, (PrevX));
-        if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
-        || IN_RANGE(GraphBottom, Y, GraphTop))
+        if (i->Type == TYPE_FUNCTION && i->As.Function.ParamCount == 1)
         {
-            Graph_DrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColor);
+            double PrevX = GraphLeft;
+            double PrevY = Jit_ExecuteFunction(&sJit, &i->As.Function, (PrevX));
+            for (int x = 1; x < Width; x++)
+            {
+                double X = GRAPH_FROM_SCR_X(x);
+                double Y = Jit_ExecuteFunction(&sJit, &i->As.Function, (PrevX));
+                if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
+                || IN_RANGE(GraphBottom, Y, GraphTop))
+                {
+                    Graph_DrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, Colors[k]);
+                }
+                PrevX = X;
+                PrevY = Y;
+            }
         }
-        PrevX = X;
-        PrevY = Y;
+        k = (k + 1) % STATIC_ARRAY_SIZE(Colors);
+        i = i->Next;
     }
 }
-
-
 
 
 

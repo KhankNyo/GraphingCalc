@@ -53,6 +53,12 @@ void Storage_ResetTmpAndStack(jit_storage_manager *S)
     memset(S->RegIsBusy, 0, TARGETENV_REG_COUNT);
 }
 
+void Storage_Reset(jit_storage_manager *S)
+{
+    Storage_ResetTmpAndStack(S);
+    S->GlobalSize = 0;
+}
+
 
 storage_spill_data Storage_Spill(jit_storage_manager *S)
 {

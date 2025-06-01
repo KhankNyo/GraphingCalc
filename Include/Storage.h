@@ -26,6 +26,7 @@ typedef struct storage_spill_data
 
 jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalCapacity);
 void Storage_ResetTmpAndStack(jit_storage_manager *S);
+void Storage_Reset(jit_storage_manager *S);
 
 /* spill all busy registers */
 storage_spill_data Storage_Spill(jit_storage_manager *S);

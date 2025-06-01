@@ -8,6 +8,7 @@ typedef struct jit_expression jit_expression;
 typedef struct jit_function_parameter jit_function_parameter;
 typedef struct jit_variable jit_variable;
 typedef struct jit_function jit_function;
+typedef struct jit_debug_info jit_debug_info;
 
 typedef enum jit_storage_type 
 {
@@ -53,16 +54,22 @@ struct jit_expression
     } As;
 };
 
-struct jit_variable
+struct jit_debug_info 
 {
     strview Str;
+    uint Location;
+    uint ByteCount;
+};
+
+struct jit_variable
+{
+    jit_debug_info Dbg;
     jit_expression Expr;
 };
 
 struct jit_function 
 {
-    strview Str;
-    uint Location;
+    jit_debug_info Dbg;
     int ParamStart;
     int ParamCount;
     int ReturnReg;

@@ -152,6 +152,11 @@ static BOOL Win32_PollInputs(void)
     return TRUE;
 }
 
+int main(void)
+{
+    WinMain(NULL, NULL, NULL, 0);
+}
+
 int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PCHAR CmdLine, int CmdShow)
 {
     (void)PrevInstance, (void)CmdLine, (void)CmdShow;
@@ -201,15 +206,14 @@ int WINAPI WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PCHAR CmdLine, in
     QueryPerformanceCounter(&StartTime);
     while (Win32_PollInputs())
     {
-
         Graph_OnLoop(&sWin32_GraphState);
         QueryPerformanceCounter(&EndTime);
         sWin32_FrameTimeMs = (EndTime.QuadPart - StartTime.QuadPart) * sWin32_MsPerPerfCount;
-        if (sWin32_FrameTimeMs + 1 < sWin32_FrameTimeTargetMs)
+        if (sWin32_FrameTimeMs - 1 < sWin32_FrameTimeTargetMs)
         {
             LARGE_INTEGER SleepStart, SleepEnd;
             QueryPerformanceCounter(&SleepStart);
-            Sleep(sWin32_FrameTimeTargetMs - sWin32_FrameTimeMs - 1);
+            Sleep(sWin32_FrameTimeTargetMs - sWin32_FrameTimeMs + 1);
             QueryPerformanceCounter(&SleepEnd);
             sWin32_FrameTimeMs += (SleepEnd.QuadPart - SleepStart.QuadPart) * sWin32_MsPerPerfCount;
         }

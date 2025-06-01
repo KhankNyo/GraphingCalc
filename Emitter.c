@@ -144,7 +144,7 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 int TargetEnv_AlignStackSize(int StackSize)
 {
     if (StackSize % 16)
-        return (StackSize + 16) / 16 * 16;
+        return ROUND_TO_MULTIPLE(StackSize, 16);
     return StackSize;
 }
 /* MS x64 first argument */
@@ -364,7 +364,22 @@ void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
 }
 
+int Emit_Jump(jit_emitter *Emitter)
+{
+    /* jmp 0 */
+    u32 Location = 0;
+    int PatchLocation = Emit(Emitter, 1, 0xE9);
+    EmitArray(Emitter, (u8 *)&Location, sizeof Location);
+    return PatchLocation;
+}
 
+void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation)
+{
+    assert(JumpInsLocation < Emitter->BufferCapacity);
+    u8 *Location = Emitter->Buffer + JumpInsLocation + 1;
+    i32 Rel32 = (i64)Emitter->BufferSize - (i64)(JumpInsLocation + 5);
+    MemCpy(Location, &Rel32, sizeof Rel32);
+}
 
 
 #define PEEK(p_dd, offset) ((p_dd)->InstructionSize + (offset) < (p_dd)->MemoryCapacity\
@@ -520,6 +535,12 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
         i32 Rel32 = ConsumeDWord(&Disasm);
         u64 Dst = Addr + 5 + (i64)Rel32;
         WriteInstruction(&Disasm, "call %016x", Dst);
+    } break;
+    case 0xE9:
+    {
+        i32 Rel32 = ConsumeDWord(&Disasm);
+        u64 Dst = Addr + 5 + (i64)Rel32;
+        WriteInstruction(&Disasm, "jmp %016x", Dst);
     } break;
     case 0x48:
     {

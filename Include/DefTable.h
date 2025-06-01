@@ -4,6 +4,7 @@
 #include "Common.h"
 #include "JitCommon.h"
 
+typedef u32 (*def_table_hash_fn)(const char *Str, int StrLen);
 typedef struct def_table_entry def_table_entry;
 typedef struct def_table def_table;
 
@@ -19,20 +20,26 @@ struct def_table_entry
     def_table_entry_type Type;
 
     union {
-        strview Str;
+        jit_debug_info Common;
         jit_function Function;
         jit_variable Variable;
     } As;
+
+    def_table_entry *Next, *Prev;
 };
 
 struct def_table 
 {
-    uint Count; 
-    def_table_entry Array[256];
+    def_table_hash_fn HashFn;
+    def_table_entry *Array;
+    uint Count, Capacity; 
+
+    def_table_entry *Head, *Tail;
 };
 
-def_table DefTable_Init(void);
-void DefTable_Destroy(def_table *Table);
+
+def_table DefTable_Init(def_table_entry *Array, uint Capacity, def_table_hash_fn HashFn);
+void DefTable_Reset(def_table *Table);
 
 def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, def_table_entry_type Type);
 def_table_entry *DefTable_Find(def_table *Table, const char *Str, int StrLen, def_table_entry_type Type);
