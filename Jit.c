@@ -124,7 +124,9 @@ static jit_token ParseIdentifier(jit *Jit)
 #define STREQU(literal, strv) \
     (((sizeof(literal) - 1) == (strv).Len)\
      && StrEqu(literal, (strv).Ptr, sizeof(literal) - 1))
-    while (IsIdentifier(Peek(Jit, 0)))
+    while (IsIdentifier(Peek(Jit, 0)) 
+    || '_' == Peek(Jit, 0) 
+    || IsNumber(Peek(Jit, 0)))
     {
         Advance(Jit);
     }
@@ -433,32 +435,46 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
 {
     /* Consumed '(' */
     int ArgCount = 0;
+    int ArgStackSize = TargetEnv_GetArgStackSize(Fn->ParamCount);
+    int ArgStackTop = Storage_PushStack(&Jit->Storage, ArgStackSize);
+
     Error_PushMarker(&Jit->Error, &Jit->Curr);
     if (NextToken(Jit).Type != TOK_RPAREN)
     {
         do {
-            assert(ArgCount < 4 && "TODO: more args");
-            if (Jit_ParseExpr(Jit, PREC_EXPR))
+            if (!Jit_ParseExpr(Jit, PREC_EXPR))
+                break;
+
+            jit_expression *ArgExpr = Expr_Pop(Jit);
+            if (ArgCount < TargetEnv_GetArgRegCount()) /* register argument */
             {
-                jit_expression *Tmp = Expr_Pop(Jit);
-                switch (Tmp->Storage)
+                int ArgReg = TargetEnv_GetArgReg(ArgCount);
+                switch (ArgExpr->Storage)
                 {
                 case STORAGE_CONST:
                 {
-                    Jit_EmitLoadConst(Jit, ArgCount, Tmp->As.Const);
+                    Jit_EmitLoadConst(Jit, ArgReg, ArgExpr->As.Const);
                 } break;
                 case STORAGE_MEM:
                 {
-                    Emit_Load(&Jit->Emitter, ArgCount, Tmp->As.Mem.BaseReg, Tmp->As.Mem.Offset);
+                    Emit_Load(&Jit->Emitter, ArgReg, ArgExpr->As.Mem.BaseReg, ArgExpr->As.Mem.Offset);
                 } break;
                 case STORAGE_REG:
                 {
-                    Emit_Move(&Jit->Emitter, ArgCount, Tmp->As.Reg);
-                    Storage_DeallocateReg(&Jit->Storage, Tmp->As.Reg);
+                    Emit_Move(&Jit->Emitter, ArgReg, ArgExpr->As.Reg);
+                    Storage_DeallocateReg(&Jit->Storage, ArgExpr->As.Reg);
                 } break;
                 }
 
-                Storage_ForceAllocateReg(&Jit->Storage, ArgCount);
+                Storage_ForceAllocateReg(&Jit->Storage, ArgReg);
+            }
+            else /* memory argument */
+            {
+                int ArgOffset = TargetEnv_GetArgOffset(ArgStackTop, ArgCount);
+                int ArgBaseReg = TargetEnv_GetArgBaseReg();
+                int Tmp = Jit_CopyToReg(Jit, Storage_AllocateReg(&Jit->Storage).As.Reg, ArgExpr).As.Reg;
+                Emit_Store(&Jit->Emitter, Tmp, ArgBaseReg, ArgOffset);
+                Storage_DeallocateReg(&Jit->Storage, Tmp);
             }
             ArgCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
@@ -475,6 +491,7 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
             Fn->ParamCount, Fn->ParamCount > 1? "s" : "", ArgCount
         );
     }
+    Storage_PopStack(&Jit->Storage, ArgStackSize);
     Error_PopMarker(&Jit->Error);
     return !Jit->Error.Available;
 }
@@ -497,7 +514,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     storage_spill_data Spilled = Storage_Spill(&Jit->Storage); 
     for (uint i = 0; i < Spilled.Count; i++)
     {
-        Emit_Store(&Jit->Emitter, Spilled.Reg[i], Jit->Storage.StackPtrReg, Spilled.StackOffset[i]);
+        Emit_Store(&Jit->Emitter, Spilled.Reg[i], TargetEnv_GetStackFrameReg(), Spilled.StackOffset[i]);
     }
 
     /* parse args and emit call */
@@ -523,7 +540,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
             Emit_Move(&Jit->Emitter, Result.As.Reg, Function->ReturnReg);
             DifferentReturnReg = true;
         }
-        Emit_Load(&Jit->Emitter, Spilled.Reg[i], Jit->Storage.StackPtrReg, Spilled.StackOffset[i]);
+        Emit_Load(&Jit->Emitter, Spilled.Reg[i], TargetEnv_GetStackFrameReg(), Spilled.StackOffset[i]);
     }
 
     if (DifferentReturnReg)
@@ -723,7 +740,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
         {
             jit_expression Result = *Expr_Pop(Jit);
 
-            int ReturnReg = 0;
+            int ReturnReg = TargetEnv_GetReturnReg();
             switch (Result.Storage)
             {
             case STORAGE_CONST:
@@ -797,7 +814,9 @@ static void Jit_Disassemble(jit *Jit)
 {
     char Instruction[64] = { 0 };
     uint BytesPerLine = 10;
-    printf("Const count: %d\n", Jit->Storage.ConstCount);
+    printf("=================================\n");
+    printf("         x64 disassembly:        \n");
+    printf("=================================\n");
     for (u64 i = 0; i < Jit->Emitter.BufferSize;)
     {
         uint InstructionBytes = 
@@ -821,20 +840,22 @@ static void Jit_Disassemble(jit *Jit)
         i += InstructionBytes;
     }
     printf("Consts: \n");
-    for (int i = 0; i < Jit->Storage.ConstCount; i++)
+    for (uint i = 0; i < Jit->Storage.GlobalSize; i++)
     {
-        printf("Global[%d] = %g\n", Jit->Storage.ConstOffset[i]/8, Jit->Storage.Consts[i]);
+        printf("Global[%d] = %g\n", i, Storage_GetConst(&Jit->Storage, i*8));
     }
 }
 
 
 jit Jit_Init(void)
 {
-    uint MemCapacity = 1024*1024;
-    void *Memory = Platform_AllocateMemory(MemCapacity);
+    uint ProgramMemCapacity = 128*1024;
+    uint GlobalMemCapacity = 4096;
+    void *ProgramMemory = Platform_AllocateMemory(ProgramMemCapacity);
+    double *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(double));
     jit Jit = {
-        .Storage = Storage_Init(5, 1), /* RBP, RCX */
-        .Emitter = Emitter_Init(Memory, MemCapacity),
+        .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
+        .Emitter = Emitter_Init(ProgramMemory, ProgramMemCapacity),
     };
     return Jit;
 }
@@ -880,14 +901,13 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
     };
 }
 
-typedef double (*jit_code)(double Param);
+typedef double (*jit_code)(double *GlobalPtr, double Param);
 
 double Jit_Execute(jit *Jit, jit_result *Result, double Param)
 {
-    (void)Jit;
     Platform_EnableExecution(Result->Code, Result->CodeSize);
     jit_code Code = Result->Code;
-    double ReturnValue = Code(Param);
+    double ReturnValue = Code(Jit->Storage.GlobalMemory, Param);
     Platform_DisableExecution(Result->Code, Result->CodeSize);
     return ReturnValue;
 }
