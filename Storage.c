@@ -1,17 +1,13 @@
 
 #include <string.h> /* memset */
-#include "Storage.h"
 #include "Emitter.h"
+#include "Storage.h"
 
 
-static uint Storage_RegCount(const jit_storage_manager *S)
-{
-    return sizeof S->RegIsBusy;
-}
 
 static int Storage_TryAllocateReg(jit_storage_manager *S)
 {
-    uint RegCount = Storage_RegCount(S);
+    uint RegCount = TARGETENV_REG_COUNT;
     for (uint i = 0; i < RegCount; i++)
     {
         if (!S->RegIsBusy[i])
@@ -24,10 +20,11 @@ static int Storage_TryAllocateReg(jit_storage_manager *S)
     return -1;
 }
 
-static int Storage_PushStack(jit_storage_manager *S, int Size)
+int Storage_PushStack(jit_storage_manager *S, int Size)
 {
     S->StackSize += Size;
     S->MaxStackSize = MAX(S->StackSize, S->MaxStackSize);
+    S->MaxStackSize = TargetEnv_AlignStackSize(S->MaxStackSize);
     return -S->StackSize;
 }
 
@@ -37,11 +34,12 @@ void Storage_PopStack(jit_storage_manager *S, int Size)
 }
 
 
-jit_storage_manager Storage_Init(int StackPtrReg, int GlobalPtrReg)
+
+jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalMemCapacity)
 {
     jit_storage_manager S = {
-        .StackPtrReg = StackPtrReg,
-        .GlobalPtrReg = GlobalPtrReg,
+        .GlobalMemory = GlobalMemory,
+        .GlobalCapacity = GlobalMemCapacity,
     };
     Storage_ResetTmpAndStack(&S);
     return S;
@@ -49,10 +47,10 @@ jit_storage_manager Storage_Init(int StackPtrReg, int GlobalPtrReg)
 
 void Storage_ResetTmpAndStack(jit_storage_manager *S)
 {
-    S->StackSize = 0x20; /* shadow space */
+    S->StackSize = 32; /* shadow space */
     S->MaxStackSize = S->StackSize;
     S->BusyRegCount = 0;
-    memset(S->RegIsBusy, 0, Storage_RegCount(S));
+    memset(S->RegIsBusy, 0, TARGETENV_REG_COUNT);
 }
 
 
@@ -60,11 +58,11 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
 {
     storage_spill_data Spill = { 0 };
 
-    for (uint i = 0; i < Storage_RegCount(S) && S->BusyRegCount; i++)
+    for (uint i = 0; i < TARGETENV_REG_COUNT && S->BusyRegCount; i++)
     {
         if (S->RegIsBusy[i])
         {
-            int RegToSpill = i;
+            int RegToSpill = TargetEnv_GetArgReg(i);
             i32 StackOffset = Storage_PushStack(S, sizeof(double));
 
             /* spill it to stack memory */
@@ -90,7 +88,7 @@ void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
 
 jit_expression Storage_ForceAllocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(Reg < Storage_RegCount(S));
+    assert(Reg < TARGETENV_REG_COUNT);
     S->BusyRegCount += !S->RegIsBusy[Reg];
     S->RegIsBusy[Reg] = true;
 
@@ -112,7 +110,7 @@ jit_expression Storage_AllocateReg(jit_storage_manager *S)
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(Reg < Storage_RegCount(S) - 1);
+    assert(Reg < TARGETENV_REG_COUNT - 1);
 
     S->BusyRegCount -= S->RegIsBusy[Reg];
     S->RegIsBusy[Reg] = false;
@@ -125,7 +123,7 @@ jit_expression Storage_AllocateStack(jit_storage_manager *S)
         .Storage = STORAGE_MEM,
         .As.Mem = {
             .Offset = Storage_PushStack(S, sizeof(double)),
-            .BaseReg = S->StackPtrReg,
+            .BaseReg = TargetEnv_GetStackFrameReg(),
         },
     };
     S->MaxStackSize = MAX(S->StackSize, S->MaxStackSize);
@@ -134,56 +132,29 @@ jit_expression Storage_AllocateStack(jit_storage_manager *S)
 
 jit_expression Storage_AllocateGlobal(jit_storage_manager *S)
 {
+    assert(S->GlobalSize < S->GlobalCapacity);
     jit_expression Global = {
         .Storage = STORAGE_MEM,
         .As.Mem = {
-            .Offset = S->GlobalSize,
-            .BaseReg = S->GlobalPtrReg,
+            .Offset = S->GlobalSize * sizeof(double),
+            .BaseReg = TargetEnv_GetGlobalPtrReg(),
         },
     };
-    S->GlobalSize += sizeof(double);
+    S->GlobalSize++;
     return Global;
 }
 
 jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const)
 {
     jit_expression Global = Storage_AllocateGlobal(S);
-    S->Consts[S->ConstCount] = Const;
-    S->ConstOffset[S->ConstCount] = Global.As.Mem.Offset;
-    S->ConstCount++;
+    S->GlobalMemory[Global.As.Mem.Offset / sizeof(double)] = Const;
     return Global;
 }
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset)
 {
-    /* binary search */
-    assert(S->ConstCount > 0);
-    uint Lower = 0;
-    uint Upper = S->ConstCount - 1;
-    while (Lower + 1 < Upper)
-    {
-        uint Mid = Lower + (Upper - Lower)/2;
-        if (S->ConstOffset[Mid] < GlobalOffset)
-        {
-            Lower = Mid;
-        }
-        else if (S->ConstOffset[Mid] > GlobalOffset)
-        {
-            Upper = Mid;
-        }
-        else
-        {
-            return S->Consts[Mid];
-        }
-    }
-
-    if (S->ConstOffset[Lower] == GlobalOffset)
-        return S->Consts[Lower];
-    if (S->ConstOffset[Upper] == GlobalOffset)
-        return S->Consts[Upper];
-
-    assert(false && "Could not get const.");
-    return 0;
+    assert(IN_RANGE(0, GlobalOffset, (i64)S->GlobalCapacity));
+    return S->GlobalMemory[GlobalOffset / sizeof(double)];
 }
 
 

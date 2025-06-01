@@ -5,29 +5,26 @@
 #include "JitCommon.h"
 #include "Emitter.h"
 
-
 typedef struct jit_storage_manager
 {
     int MaxStackSize;
     int StackSize;
-    int GlobalSize;
-    int StackPtrReg;
-    int GlobalPtrReg;
-    int ConstCount;
     int BusyRegCount;
-    bool8 RegIsBusy[8];
-    i32 ConstOffset[256];
-    double Consts[256];
+    bool8 RegIsBusy[TARGETENV_REG_COUNT];
+
+    double *GlobalMemory;
+    uint GlobalCapacity;
+    uint GlobalSize;
 } jit_storage_manager;
 
 typedef struct storage_spill_data 
 {
     uint Count;
-    u8 Reg[8];
-    i32 StackOffset[8];
+    u8 Reg[TARGETENV_REG_COUNT];
+    i32 StackOffset[TARGETENV_REG_COUNT];
 } storage_spill_data;
 
-jit_storage_manager Storage_Init(int StackPtrReg, int GlobalPtrReg);
+jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalCapacity);
 void Storage_ResetTmpAndStack(jit_storage_manager *S);
 
 /* spill all busy registers */
@@ -41,6 +38,7 @@ jit_expression Storage_AllocateGlobal(jit_storage_manager *S);
 jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const);
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg);
+int Storage_PushStack(jit_storage_manager *S, int Size); /* returns -StackSize */
 void Storage_PopStack(jit_storage_manager *S, int Size);
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset);

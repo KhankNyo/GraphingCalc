@@ -2,8 +2,9 @@
 #define EMITTER_H
 
 
-#include "Common.h"
 #include "JitCommon.h"
+
+#define TARGETENV_REG_COUNT 8
 
 typedef struct jit_emitter 
 {
@@ -12,10 +13,23 @@ typedef struct jit_emitter
     uint BufferCapacity;
 } jit_emitter;
 
-jit_emitter Emitter_Init(void *Buffer, uint BufferCapacity);
-void Emitter_Reset(jit_emitter *Emitter);
 
 uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64]);
+
+
+int TargetEnv_AlignStackSize(int StackSize);
+int TargetEnv_GetGlobalPtrReg(void);
+int TargetEnv_GetStackFrameReg(void);
+int TargetEnv_GetArgStackSize(int ArgCount);
+int TargetEnv_GetArgRegCount(void);
+int TargetEnv_GetArgBaseReg(void);
+int TargetEnv_GetArgReg(int ArgIndex);
+int TargetEnv_GetArgOffset(int StackTop, int ArgIndex);
+int TargetEnv_GetReturnReg(void);
+
+
+jit_emitter Emitter_Init(u8 *Buffer, uint BufferCapacity);
+void Emitter_Reset(jit_emitter *Emitter);
 
 void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);

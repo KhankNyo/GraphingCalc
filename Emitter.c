@@ -140,8 +140,63 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 }
 
 
+/* align to 16-byte boundary */
+int TargetEnv_AlignStackSize(int StackSize)
+{
+    if (StackSize % 16)
+        return (StackSize + 16) / 16 * 16;
+    return StackSize;
+}
+/* MS x64 first argument */
+int TargetEnv_GetGlobalPtrReg(void)
+{
+    return RCX;
+}
+/* base pointer */
+int TargetEnv_GetStackFrameReg(void)
+{
+    return RBP;
+}
+int TargetEnv_GetArgStackSize(int ArgCount)
+{
+    /* rcx as global ptr reg, but we won't store it on stack */
+    int StackSize = (ArgCount + 1) * sizeof(double);
+    if (StackSize < 32)
+        return 32;
+    return StackSize;
+}
+int TargetEnv_GetArgRegCount(void)
+{
+    /* rcx taken as global ptr reg */
+    /* xmm1 = arg0  */
+    /* xmm2 = arg1  */
+    /* xmm3 = arg2  */
+    /* rest are on stack */
+    return 3;
+}
+int TargetEnv_GetArgBaseReg(void)
+{
+    return RBP;
+}
+int TargetEnv_GetArgReg(int ArgIndex)
+{
+    assert(ArgIndex < 4 && "bad arg index");
+    return ArgIndex + 1;
+}
+int TargetEnv_GetArgOffset(int StackTop, int ArgIndex)
+{
+    assert(ArgIndex >= 4 && "bad arg index");
+    return (ArgIndex + 1) * sizeof(double) + StackTop;
+}
+int TargetEnv_GetReturnReg(void)
+{
+    return 0; /* xmm0 */
+}
 
-jit_emitter Emitter_Init(void *Buffer, uint BufferCapacity)
+
+
+
+jit_emitter Emitter_Init(u8 *Buffer, uint BufferCapacity)
 {
     jit_emitter Emitter = { 
         .Buffer = Buffer,
@@ -264,13 +319,13 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
         Emit(Emitter, 1, 0x90); /* nop */
     }
     uint FunctionLocation = EmitArray(Emitter, sPrologue, sizeof sPrologue);
-    int NumArgsInReg = 4;
     for (int i = 0; i < ParamCount; i++)
     {
-        int Displacement = 0x10 + i*8;
-        if (i < NumArgsInReg)
+        /* 0x10 = rbp and retaddr, 0x8 = shadow space for first argument (rcx/global ptr reg) */
+        int Displacement = 0x10 + 0x8 + i*sizeof(double); 
+        if (i < TargetEnv_GetArgRegCount())
         {
-            Emit_Store(Emitter, i, RBP, Displacement);
+            Emit_Store(Emitter, TargetEnv_GetArgReg(i), RBP, Displacement);
         }
 
         Params[i].Expr = (jit_expression) {
@@ -405,25 +460,25 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type, const char
             }
             else /* 8/32 bit displacement */
             {
-                WRITE_OPERANDS("%s", Regs[Reg], "[%s %c %d]", sIntReg[Base], SIGNED_NUMBER(Offset));
+                WRITE_OPERANDS("%s", Regs[Reg], "[%s %c 0x%x]", sIntReg[Base], SIGNED_NUMBER(Offset));
             }
         }
         else /* SIB with index */
         {
             if (0 == Mod) /* no displacement */
             {
-                WRITE_OPERANDS("%s", Regs[Reg], "[%s + %d*%s]", sIntReg[Base], Scale, sIntReg[Index]);
+                WRITE_OPERANDS("%s", Regs[Reg], "[%s + %x*%s]", sIntReg[Base], Scale, sIntReg[Index]);
             }
             else /* 8/32 bit displacement */
             {
-                WRITE_OPERANDS("%s", Regs[Reg], "[%s + %d*%s %c %d]", sIntReg[Base], Scale, sIntReg[Index], SIGNED_NUMBER(Offset));
+                WRITE_OPERANDS("%s", Regs[Reg], "[%s + %x*%s %c 0x%x]", sIntReg[Base], Scale, sIntReg[Index], SIGNED_NUMBER(Offset));
             }
         }
     }
     else if (0 == Mod && 0x5 == Rm) /* displacement only (rip-relative in 64 bit mode) */
     {
         i32 DWord = ConsumeDWord(Data);
-        WRITE_OPERANDS("%s", Regs[Reg], "[rip %c %d]", SIGNED_NUMBER(DWord));
+        WRITE_OPERANDS("%s", Regs[Reg], "[rip %c 0x%x]", SIGNED_NUMBER(DWord));
     }
     else /* [register]/[register + displacement] */
     {
@@ -434,7 +489,7 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type, const char
         else /* 8/32 bit displacement */
         {
             i32 Offset = X64ModOffset(Data, Mod);
-            WRITE_OPERANDS("%s", sXmmReg[Reg], "[%s %c %d]", sIntReg[Rm], SIGNED_NUMBER(Offset));
+            WRITE_OPERANDS("%s", sXmmReg[Reg], "[%s %c 0x%x]", sIntReg[Rm], SIGNED_NUMBER(Offset));
         }
     }
 #undef WRITE_OPERANDS
@@ -484,7 +539,7 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             {
                 WriteInstruction(&Disasm, "sub ");
                 i32 Immediate = ConsumeDWord(&Disasm);
-                WriteInstruction(&Disasm, "%s, %d", sIntReg[Rm], Immediate);
+                WriteInstruction(&Disasm, "%s, 0x%x", sIntReg[Rm], Immediate);
             }
             else Unknown = true;
         }
