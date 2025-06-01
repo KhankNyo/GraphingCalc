@@ -7,10 +7,11 @@
 
 typedef struct jit_storage_manager
 {
-    int MaxStackSize;
-    int StackSize;
-    int BusyRegCount;
-    bool8 RegIsBusy[TARGETENV_REG_COUNT];
+    int Scope;
+    int MaxStackSize[2];
+    int StackSize[2];
+    int BusyRegCount[2];
+    bool8 RegIsBusy[2][TARGETENV_REG_COUNT];
 
     double *GlobalMemory;
     uint GlobalCapacity;
@@ -25,8 +26,9 @@ typedef struct storage_spill_data
 } storage_spill_data;
 
 jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalCapacity);
-void Storage_ResetTmpAndStack(jit_storage_manager *S);
 void Storage_Reset(jit_storage_manager *S);
+void Storage_PushScope(jit_storage_manager *S);
+void Storage_PopScope(jit_storage_manager *S);
 
 /* spill all busy registers */
 storage_spill_data Storage_Spill(jit_storage_manager *S);
@@ -43,6 +45,7 @@ int Storage_PushStack(jit_storage_manager *S, int Size); /* returns -StackSize *
 void Storage_PopStack(jit_storage_manager *S, int Size);
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset);
+int Storage_GetMaxStackSize(const jit_storage_manager *S);
 
 
 #endif /* JIT_STORAGE_H */

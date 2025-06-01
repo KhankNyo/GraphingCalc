@@ -2,6 +2,7 @@
 #define PLATFORM_H
 
 #include "Common.h"
+#include "Jit.h"
 
 typedef enum mouse_flag
 {
@@ -62,6 +63,8 @@ typedef struct graph_state
     double GraphWidth;
     double GraphHeight;
     double Scale, ScaleInv;
+
+    jit Jit;
 
     background Bg;
     bool8 ShouldRedraw;

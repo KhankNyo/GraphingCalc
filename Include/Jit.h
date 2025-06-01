@@ -8,11 +8,13 @@
 #include "Storage.h"
 
 
+typedef void (*jit_init)(double *GlobalMemory);
+typedef struct jit_graphable jit_graphable;
 typedef struct jit_result
 {
     const char *ErrMsg;
-    void *Code;
-    uint CodeSize;
+    double *GlobalData;
+    def_table_entry *GlobalSymbol;
 } jit_result;
 
 typedef struct jit 
@@ -23,13 +25,13 @@ typedef struct jit
     uint SafePeekDist;
 
     int LocalVarCount, LocalVarBase, LocalVarCapacity;
-    jit_variable LocalVars[256*4];
+    jit_variable *LocalVars;
     int ScopeCount;
     def_table Global;
 
     struct jit_token Curr, Next;
 
-    jit_expression ExprStack[128];
+    jit_expression *ExprStack;
     int ExprStackSize, ExprStackCapacity;
 
     int VarDeclEnd;
@@ -38,13 +40,20 @@ typedef struct jit
     jit_error Error;
 } jit;
 
-jit Jit_Init(void);
+/* returns 0 on success, otherwise returns minimum scratch pad memory size */
+uint Jit_Init(
+    jit *Jit,
+    void *Scratchpad, uint ScratchpadCapacity, /* used internally when Jit_Compile is called */
+    double *GlobalMemory, uint GlobalMemCapacity, /* used to store the compiled machine code */
+    void *ProgramMemory, uint ProgramMemCapacity, /* used to store global data referenced by the compiled code */
+    def_table_entry *DefTableArray, uint DefTableCapacity /* used to store global symbols */
+);
 void Jit_Destroy(jit *Jit);
 
 jit_result Jit_Compile(jit *Jit, const char *Expr);
-double Jit_Execute(jit *Jit, jit_result *Code, double Param);
-double Jit_ExecuteFunction(jit *Jit, jit_function *Fn, double Param);
 
+jit_init Jit_GetInit(jit *Jit, const jit_result *Result);
+void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn);
 
 
 #endif /* JIT_H */

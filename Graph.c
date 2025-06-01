@@ -334,13 +334,21 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
 
 
 static jit_result sResult;
-static jit sJit;
 graph_state Graph_OnEntry(void)
 {
     int ScrWidth = 1080, ScrHeight = 720;
     double AspectRatio = (double)ScrHeight / ScrWidth;
     Platform_SetScreenBufferDimensions(ScrWidth, ScrHeight);
     Platform_SetFrameTimeTarget(1000.0 / 120);
+
+    uint ScratchpadCapacity = 128 * 1024;
+    uint ProgramMemCapacity = 32*1024;
+    uint GlobalMemCapacity = 2*1024;
+    uint DefTableCapacity = 4*1024;
+    void *Scratchpad = Platform_AllocateMemory(ScratchpadCapacity);
+    void *ProgramMemory = Platform_AllocateMemory(ProgramMemCapacity);
+    double *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(double));
+    def_table_entry *DefTableArray = Platform_AllocateMemory(DefTableCapacity * sizeof(def_table_entry));
 
     graph_state State = {
         .GraphLeft = -10,
@@ -363,26 +371,38 @@ graph_state Graph_OnEntry(void)
             .MinorTickThickness = 1,
             .MainAxisThickness = 3,
         },
+
     };
     Graph_UpdateScaling(&State, ScrWidth);
+    assert( 0 == Jit_Init(
+            &State.Jit, 
+            Scratchpad, ScratchpadCapacity,
+            GlobalMemory, GlobalMemCapacity, 
+            ProgramMemory, ProgramMemCapacity, 
+            DefTableArray, DefTableCapacity
+        )
+    );
 
-    sJit = Jit_Init();
+
     const char *Expr = 
-        "m = 3\n"
-        "f(x) = x + m\n"
-        "g(x) = 3*x\n"
-        "h(x) = x*x\n"
+        "m = 2\n"
+        "b = 1 + m\n"
+        "f(x) = m*x + b\n"
+        "c = f(0)\n"
+        "g(x) = c*x\n"
         ;
-    sResult = Jit_Compile(&sJit, Expr);
-    if (sResult.Code)
+    sResult = Jit_Compile(&State.Jit, Expr);
+    if (sResult.ErrMsg)
     {
-        printf("Compilation OK.\n");
-        double Result = Jit_Execute(&sJit, &sResult, 4);
-        printf("Result: %f\n", Result);
+        printf("%s\n", sResult.ErrMsg);
     }
     else
     {
-        printf("%s\n", sResult.ErrMsg);
+        printf("Compilation OK, calling init: \n");
+        Platform_EnableExecution(ProgramMemory, ProgramMemCapacity);
+        jit_init Init = Jit_GetInit(&State.Jit, &sResult);
+        Init(GlobalMemory);
+        printf("Call OK.\n");
     }
 
     return State;
@@ -480,27 +500,29 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     if (sResult.ErrMsg)
         return;
 
-    Jit_Execute(&sJit, &sResult, 0);
     u32 Colors[4] = {
-        RGB(0xFF, 0, 0x80),
+        RGB(0xFF, 0x80, 0xFF),
         RGB(0, 0xFF, 0x80),
         RGB(0, 0x80, 0xFF),
         GraphColor
     };
     uint k = 0;
 
-    /* function graph */
-    def_table_entry *i = sJit.Global.Head;
+    /* graph each function */
+    def_table_entry *i = sResult.GlobalSymbol;
     while (i)
     {
         if (i->Type == TYPE_FUNCTION && i->As.Function.ParamCount == 1)
         {
+            typedef double (*graphable_fn)(double *GlobalData, double Param);
+            graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, &i->As.Function);
+
             double PrevX = GraphLeft;
-            double PrevY = Jit_ExecuteFunction(&sJit, &i->As.Function, (PrevX));
+            double PrevY = Fn(sResult.GlobalData, PrevX);
             for (int x = 1; x < Width; x++)
             {
                 double X = GRAPH_FROM_SCR_X(x);
-                double Y = Jit_ExecuteFunction(&sJit, &i->As.Function, (PrevX));
+                double Y = Fn(sResult.GlobalData, X);
                 if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
                 || IN_RANGE(GraphBottom, Y, GraphTop))
                 {
@@ -509,8 +531,8 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
                 PrevX = X;
                 PrevY = Y;
             }
+            k = (k + 1) % STATIC_ARRAY_SIZE(Colors);
         }
-        k = (k + 1) % STATIC_ARRAY_SIZE(Colors);
         i = i->Next;
     }
 }

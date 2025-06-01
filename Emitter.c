@@ -373,12 +373,11 @@ int Emit_Jump(jit_emitter *Emitter)
     return PatchLocation;
 }
 
-void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation)
+void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst)
 {
     assert(JumpInsLocation < Emitter->BufferCapacity);
-    u8 *Location = Emitter->Buffer + JumpInsLocation + 1;
-    i32 Rel32 = (i64)Emitter->BufferSize - (i64)(JumpInsLocation + 5);
-    MemCpy(Location, &Rel32, sizeof Rel32);
+    i32 Rel32 = (i64)Dst - (i64)(JumpInsLocation + 5);
+    MemCpy(Emitter->Buffer + JumpInsLocation + 1, &Rel32, sizeof Rel32);
 }
 
 
