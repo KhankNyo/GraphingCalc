@@ -31,7 +31,6 @@ typedef struct jit
 
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
-    jit_expression SignLocation;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;

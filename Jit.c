@@ -261,7 +261,6 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
     Jit->ExprStackSize = 0;
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
-    Jit->SignLocation = Storage_AllocateConst(&Jit->Storage, -0.0);
     ConsumeToken(Jit);
 
     Storage_ResetTmpAndStack(&Jit->Storage);
@@ -340,31 +339,38 @@ static void Expr_Neg(jit *Jit)
     } break;
     case STORAGE_MEM:
     {
-        int Reg = Jit->SignLocation.As.Mem.BaseReg;
-        i32 Offset = Jit->SignLocation.As.Mem.Offset;
         jit_expression Result = Storage_AllocateReg(&Jit->Storage);
-        int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
 
-        Emit_Load(&Jit->Emitter, TmpReg, Reg, Offset);
-        Emit_Load(&Jit->Emitter, Result.As.Reg, E->As.Mem.BaseReg, E->As.Mem.Offset);
-        Emit_XorReg(&Jit->Emitter, Result.As.Reg, TmpReg);
-        Storage_DeallocateReg(&Jit->Storage, TmpReg);
+        Emit_LoadZero(&Jit->Emitter, Result.As.Reg);
+        Emit_Sub(&Jit->Emitter, Result.As.Reg, E->As.Mem.BaseReg, E->As.Mem.Offset);
 
         *E = Result;
     } break;
     case STORAGE_REG:
     {
-        int TmpReg = Storage_AllocateReg(&Jit->Storage).As.Reg;
-        int Reg = Jit->SignLocation.As.Mem.BaseReg;
-        i32 Offset = Jit->SignLocation.As.Mem.Offset;
+        jit_expression Result = Storage_AllocateReg(&Jit->Storage);
 
-        Emit_Load(&Jit->Emitter, TmpReg, Reg, Offset);
-        Emit_XorReg(&Jit->Emitter, E->As.Reg, TmpReg);
-        Storage_DeallocateReg(&Jit->Storage, TmpReg);
+        Emit_LoadZero(&Jit->Emitter, Result.As.Reg);
+        Emit_SubReg(&Jit->Emitter, Result.As.Reg, E->As.Reg);
+
+        Storage_DeallocateReg(&Jit->Storage, E->As.Reg);
     } break;
     }
 }
  
+
+static void Jit_EmitLoadConst(jit *Jit, int Reg, double Const)
+{
+    if (0.0 == Const || -0.0 == Const)
+    {
+        Emit_LoadZero(&Jit->Emitter, Reg);
+    }
+    else
+    {
+        jit_expression Storage = Storage_AllocateConst(&Jit->Storage, Const);
+        Emit_Load(&Jit->Emitter, Reg, Storage.As.Mem.BaseReg, Storage.As.Mem.Offset);
+    }
+}
 
 static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Expr)
 {
@@ -381,8 +387,7 @@ static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Exp
     case STORAGE_CONST:
     {
         /* allocate the const */
-        jit_expression Const = Storage_AllocateConst(&Jit->Storage, Expr->As.Const);
-        Emit_Load(&Jit->Emitter, Reg, Const.As.Mem.BaseReg, Const.As.Mem.Offset);
+        Jit_EmitLoadConst(Jit, Reg, Expr->As.Const);
     } break;
     }
     return (jit_expression) {
@@ -440,8 +445,7 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
                 {
                 case STORAGE_CONST:
                 {
-                    jit_expression Global = Storage_AllocateConst(&Jit->Storage, Tmp->As.Const);
-                    Emit_Load(&Jit->Emitter, ArgCount, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
+                    Jit_EmitLoadConst(Jit, ArgCount, Tmp->As.Const);
                 } break;
                 case STORAGE_MEM:
                 {
@@ -724,8 +728,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
             {
             case STORAGE_CONST:
             {
-                Result = Storage_AllocateConst(&Jit->Storage, Result.As.Const);
-                Emit_Load(&Jit->Emitter, ReturnReg, Result.As.Mem.BaseReg, Result.As.Mem.Offset);
+                Jit_EmitLoadConst(Jit, ReturnReg, Result.As.Const);
             } break;
             case STORAGE_MEM:
             {

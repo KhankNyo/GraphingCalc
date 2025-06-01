@@ -29,7 +29,7 @@ void Emit_AddReg(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_SubReg(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_MulReg(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_DivReg(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_XorReg(jit_emitter *Emitter, int DstReg, int SrcReg);
+void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
 
 /* returns the function's location */
 uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCount);

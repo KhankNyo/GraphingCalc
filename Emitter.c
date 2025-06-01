@@ -240,9 +240,10 @@ void Emit_DivReg(jit_emitter *Emitter, int Dst, int Src)
     Emit_FloatOpcodeReg(Emitter, 0x5E, Dst, Src);
 }
 
-void Emit_XorReg(jit_emitter *Emitter, int DstReg, int SrcReg)
+void Emit_LoadZero(jit_emitter *Emitter, int DstReg)
 {
-    Emit(Emitter, 3, 0x0F, 0x57, MODRM(3, DstReg, SrcReg));
+    /* xorps dst, dst */
+    Emit(Emitter, 3, 0x0F, 0x57, MODRM(3, DstReg, DstReg));
 }
 
 

@@ -368,12 +368,14 @@ graph_state Graph_OnEntry(void)
 
     sJit = Jit_Init();
     const char *Expr = 
-        "f(x) = x*x\n"
-        "g(x, y) = f(x, y)\n";
+        "z() = 0\n"
+        "f(x) = z() - x\n";
     sResult = Jit_Compile(&sJit, Expr);
     if (sResult.Code)
     {
         printf("Compilation OK.\n");
+        double Result = Jit_Execute(&sJit, &sResult, 4);
+        printf("Result: %f\n", Result);
     }
     else
     {
