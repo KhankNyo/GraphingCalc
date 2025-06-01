@@ -68,13 +68,14 @@ static char Advance(jit *Jit)
 
 static jit_token CreateToken(jit *Jit, jit_token_type Type)
 {
+    int Len = Jit->End - Jit->Start;
     jit_token Tok = {
         .Type = Type,
         .Line = Jit->Line,
-        .Offset = Jit->Offset, 
+        .Offset = Jit->Offset - Len, 
         .Str = {
             .Ptr = Jit->Start,
-            .Len = Jit->End - Jit->Start,
+            .Len = Len,
         },
     };
     Jit->Start = Jit->End;
@@ -162,7 +163,7 @@ Out:
 
 static jit_token NewlineToken(jit *Jit)
 {
-    Jit->Start = Jit->End;
+    ///Jit->Start = Jit->End;
     jit_token Tok = CreateToken(Jit, TOK_NEWLINE);
     Jit->Line++;
     Jit->Offset = 1;
@@ -207,27 +208,6 @@ static jit_token Jit_Tokenize(jit *Jit)
 
 
 
-static void ErrorVA(jit *Jit, const char *ErrMsg, va_list Args)
-{
-    if (Jit->Error)
-        return;
-
-    Jit->Error = true;
-    vsnprintf(Jit->ErrMsg, sizeof Jit->ErrMsg, ErrMsg, Args);
-}
-
-static void Error(jit *Jit, const char *ErrMsg, ...)
-{
-    if (Jit->Error)
-        return;
-
-    va_list Args;
-    va_start(Args, ErrMsg);
-    ErrorVA(Jit, ErrMsg, Args);
-    va_end(Args);
-}
-
-
 static jit_token ConsumeToken(jit *Jit)
 {
     Jit->Curr = Jit->Next;
@@ -262,7 +242,7 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
     {
         va_list Args;
         va_start(Args, ErrMsg);
-        ErrorVA(Jit, ErrMsg, Args);
+        Error_AtTokenVA(&Jit->Error, &Jit->Next, ErrMsg, Args);
         va_end(Args);
         return false;
     }
@@ -277,7 +257,6 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->End = Expr;
     Jit->Line = 1;
     Jit->Offset = 1;
-    Jit->Error = false;
     Jit->LocalVarCount = 0;
     Jit->LocalVarBase = 0;
     Jit->LocalVarCapacity = STATIC_ARRAY_SIZE(Jit->LocalVars);
@@ -285,7 +264,10 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->ExprStackCapacity = STATIC_ARRAY_SIZE(Jit->ExprStack);
     Jit->SignLocation = Storage_AllocateConst(&Jit->Storage, -0.0);
     ConsumeToken(Jit);
+
     Storage_ResetTmpAndStack(&Jit->Storage);
+    Error_Reset(&Jit->Error);
+    Emitter_Reset(&Jit->Emitter);
 }
 
 
@@ -447,6 +429,7 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
 {
     /* Consumed '(' */
     int ArgCount = 0;
+    Error_PushMarker(&Jit->Error, &Jit->Curr);
     if (NextToken(Jit).Type != TOK_RPAREN)
     {
         do {
@@ -482,12 +465,13 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
     /* check arg count */
     if (ArgCount != Fn->ParamCount)
     {
-        Error(Jit, "Expected %d arguments to '%.*s', got %d instead.", 
+        Error_WithMarker(&Jit->Error, &Jit->Curr, 
+            "Expected %d arguments but got %d instead.", 
             Fn->ParamCount, Fn->Str.Len, Fn->Str.Ptr, ArgCount
         );
-        return false;
     }
-    return true;
+    Error_PopMarker(&Jit->Error);
+    return !Jit->Error.Available;
 }
 
 static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
@@ -498,7 +482,7 @@ static jit_expression Expr_Call(jit *Jit, const jit_token *FnName)
     def_table_entry *Entry = DefTable_Find(&Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION);
     if (!Entry)
     {
-        Error(Jit, "Call to undefined function: '%.*s'.", FnName->Str.Len, FnName->Str.Ptr);
+        Error_AtToken(&Jit->Error, FnName, "Call to undefined function.");
         goto ErrReturn;
     }
     jit_function *Function = &Entry->As.Function;
@@ -551,7 +535,7 @@ static jit_expression Expr_Variable(jit *Jit, const jit_token *VarName)
     jit_variable *Variable = Jit_FindVariable(Jit, VarName);
     if (NULL == Variable)
     {
-        Error(Jit, "Undefined variable: '%.*s'.", VarName->Str.Len, VarName->Str.Ptr);
+        Error_AtToken(&Jit->Error, VarName, "Undefined variable");
         return (jit_expression) { 0 };
     }
     return Variable->Expr;
@@ -570,7 +554,7 @@ static bool8 Jit_ParseUnary(jit *Jit)
     case TOK_MINUS:
     {
         if (!Jit_ParseUnary(Jit))
-            return !Jit->Error;
+            return !Jit->Error.Available;
 
         Expr_Neg(Jit);
     } break; 
@@ -600,12 +584,11 @@ static bool8 Jit_ParseUnary(jit *Jit)
     } break;
     default:
     {
-        printf("token: '%.*s'\n", Left.Str.Len, Left.Str.Ptr);
-        Error(Jit, "Expected an expression.");
+        Error_AtToken(&Jit->Error, &Left, "Expected an expression.");
     } break;
     }
 
-    return !Jit->Error;
+    return !Jit->Error.Available;
 }
 
 static precedence PrecedenceOf(jit_token_type Operator)
@@ -669,7 +652,7 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
         }
 
     }
-    return !Error && !Jit->Error;
+    return !Error && !Jit->Error.Available;
 }
 
 
@@ -876,15 +859,15 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
         }
 
         /* skip all newlines */
-        while (!Jit->Error && ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
+        while (!Jit->Error.Available && ConsumeIfNextTokenIs(Jit, TOK_NEWLINE))
         {}
-    } while (!Jit->Error && TOK_EOF != NextToken(Jit).Type);
+    } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
 
     Jit_Disassemble(Jit);
-    if (Jit->Error)
+    if (Jit->Error.Available)
     {
         return (jit_result) {
-            .ErrMsg = Jit->ErrMsg,
+            .ErrMsg = Jit->Error.Msg,
         };
     }
     return (jit_result) {

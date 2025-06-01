@@ -367,17 +367,16 @@ graph_state Graph_OnEntry(void)
     Graph_UpdateScaling(&State, ScrWidth);
 
     sJit = Jit_Init();
-    const char *Expr = "\n";
+    const char *Expr = 
+        "f(x) = x*x";
     sResult = Jit_Compile(&sJit, Expr);
     if (sResult.Code)
     {
         printf("Compilation OK.\n");
-        double Result = Jit_Execute(&sJit, &sResult, 4);
-        printf("Result = %f\n", Result);
     }
     else
     {
-        printf("Error: %s\n", sResult.ErrMsg);
+        printf("%s\n", sResult.ErrMsg);
     }
 
     return State;

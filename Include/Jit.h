@@ -2,6 +2,7 @@
 #define JIT_H
 
 #include "JitCommon.h"
+#include "JitError.h"
 #include "Emitter.h"
 #include "DefTable.h"
 #include "Storage.h"
@@ -27,8 +28,6 @@ typedef struct jit
     def_table Global;
 
     struct jit_token Curr, Next;
-    bool8 Error;
-    char ErrMsg[256];
 
     jit_expression ExprStack[128];
     int ExprStackSize, ExprStackCapacity;
@@ -36,6 +35,7 @@ typedef struct jit
 
     jit_emitter Emitter;
     jit_storage_manager Storage;
+    jit_error Error;
 } jit;
 
 jit Jit_Init(void);

@@ -1,11 +1,13 @@
 
 #include "Common.h"
 #include "JitCommon.h"
-#include "DefTable.h"
+#include "JitError.h"
 #include "Jit.h"
+#include "DefTable.h"
 #include "platform.h"
 #include "Storage.h"
 
+#include "JitError.c"
 #include "DefTable.c"
 #include "Jit.c"
 #include "Emitter.c"
