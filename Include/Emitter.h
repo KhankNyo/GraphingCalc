@@ -18,6 +18,7 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
 
 
 int TargetEnv_AlignStackSize(int StackSize);
+int TargetEnv_GetShadowSpaceSize(void);
 int TargetEnv_GetGlobalPtrReg(void);
 int TargetEnv_GetStackFrameReg(void);
 int TargetEnv_GetArgStackSize(int ArgCount);

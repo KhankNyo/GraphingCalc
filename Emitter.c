@@ -140,6 +140,11 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 }
 
 
+
+int TargetEnv_GetShadowSpaceSize(void)
+{
+    return 32;
+}
 /* align to 16-byte boundary */
 int TargetEnv_AlignStackSize(int StackSize)
 {
