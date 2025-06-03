@@ -339,7 +339,7 @@ graph_state Graph_OnEntry(void)
     int ScrWidth = 1080, ScrHeight = 720;
     double AspectRatio = (double)ScrHeight / ScrWidth;
     Platform_SetScreenBufferDimensions(ScrWidth, ScrHeight);
-    Platform_SetFrameTimeTarget(1000.0 / 120);
+    Platform_SetFrameTimeTarget(0);
 
     uint ScratchpadCapacity = 128 * 1024;
     uint ProgramMemCapacity = 32*1024;
@@ -385,11 +385,7 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "m = 2\n"
-        "b = 1 + m\n"
-        "f(x) = m*x + b\n"
-        "c = f(0)\n"
-        "g(x) = c*x\n"
+        "f(x) = x*x\n"
         ;
     sResult = Jit_Compile(&State.Jit, Expr);
     if (sResult.ErrMsg)
@@ -410,8 +406,19 @@ graph_state Graph_OnEntry(void)
 
 void Graph_OnLoop(graph_state *State)
 {
-    double MsPerFrame = Platform_GetFrameTimeMs();
-    double FPS = 1000 / MsPerFrame;
+    static double ElapsedPrev;
+    static double AvgFPS, AvgMsPerFrame;
+    static double FrameCount;
+    double ElapsedNow = Platform_GetElapsedTimeMs();
+    if (ElapsedNow - ElapsedPrev > 500)
+    {
+        AvgMsPerFrame = (ElapsedNow - ElapsedPrev) / FrameCount;
+        AvgFPS = FrameCount / ((ElapsedNow - ElapsedPrev) / 1000);
+        FrameCount = 0;
+        ElapsedPrev = ElapsedNow;
+    }
+    FrameCount++;
+
 #if 1
     printf("\rt: %g, l: %g, w: %g, h: %g, t=%.3fs, f=%3.2ffps - %4.2fms      ", 
         State->GraphTop, 
@@ -419,15 +426,45 @@ void Graph_OnLoop(graph_state *State)
         State->GraphWidth, 
         State->GraphHeight,
         Platform_GetElapsedTimeMs() * .001,
-        FPS, MsPerFrame
+        AvgFPS, AvgMsPerFrame
     );
 #endif
 
-    if (State->ShouldRedraw)
+    State->GraphInvalidated = true;
+    if (State->GraphInvalidated)
     {
-        Platform_RequestRedraw();
-        State->ShouldRedraw = false;
+        platform_screen_buffer Screen = Platform_GetScreenBuffer();
+        State->GraphInvalidated = false;
+
+
+        /* compute x and y values of each function */
+        assert(Screen.Width < (int)STATIC_ARRAY_SIZE(State->OutputArray[0]));
+        def_table_entry *i = sResult.GlobalSymbol;
+        State->GraphCount = 0;
+        memset(State->ArrayCount, 0, sizeof(State->ArrayCount));
+        while (i && State->GraphCount < STATIC_ARRAY_SIZE(State->OutputArray))
+        {
+            /* TODO: GetFnPtr returns init routine, which it shouldnt do */
+            typedef double (*graphable_fn)(double *GlobalData, double Param);
+            graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, &i->As.Function);
+            for (int x = 0; x < Screen.Width; x++)
+            {
+                double GraphX = GRAPH_FROM_SCR_X(x);
+                double GraphY = Fn(sResult.GlobalData, GraphX);
+
+                if (IN_RANGE(State->GraphTop - State->GraphHeight, GraphY, State->GraphTop))
+                {
+                    int Index = State->ArrayCount[State->GraphCount]++;
+                    State->OutputArray[State->GraphCount][Index] = GRAPH_TO_SCR_Y(GraphY);
+                    State->InputArray[State->GraphCount][Index] = GRAPH_TO_SCR_X(GraphX);
+                }
+
+            }
+            i = i->Next;
+            State->GraphCount++;
+        }
     }
+    Platform_RequestRedraw();
 }
 
 void Graph_OnExit(graph_state *State)
@@ -452,7 +489,7 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
             /* mouse direction is opposite that of the top left point of the graph */
             State->GraphLeft -= Dx; 
             State->GraphTop -= Dy;
-            State->ShouldRedraw = true;
+            State->GraphInvalidated = true;
         }
         /* always update mouse pos */
         State->PrevMouseX = MouseX;
@@ -476,7 +513,7 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
         State->GraphWidth = ScaledWidth;
         State->GraphHeight = ScaledHeight;
         State->GraphLeft = ScaledLeft;
-        State->ShouldRedraw = true;
+        State->GraphInvalidated = true;
     } break;
     }
 }
@@ -500,15 +537,15 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     if (sResult.ErrMsg)
         return;
 
-    u32 Colors[4] = {
+    u32 GraphColors[4] = {
         RGB(0xFF, 0x80, 0xFF),
         RGB(0, 0xFF, 0x80),
         RGB(0, 0x80, 0xFF),
         GraphColor
     };
-    uint k = 0;
 
     /* graph each function */
+#if 0
     def_table_entry *i = sResult.GlobalSymbol;
     while (i)
     {
@@ -535,6 +572,20 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
         }
         i = i->Next;
     }
+#else
+    for (uint k = 0; k < State->GraphCount; k++)
+    {
+        uint ColorSelect = k % STATIC_ARRAY_SIZE(GraphColors);
+        for (uint i = 1; i < State->ArrayCount[k]; i++)
+        {
+            double PrevX = State->InputArray[k][i - 1];
+            double PrevY = State->OutputArray[k][i - 1];
+            double X = State->InputArray[k][i];
+            double Y = State->OutputArray[k][i];
+            DrawLineXiaolinWu(Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColors[ColorSelect]);
+        }
+    }
+#endif
 }
 
 
