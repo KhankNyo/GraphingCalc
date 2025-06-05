@@ -63,6 +63,7 @@ typedef struct graph_state
     double GraphWidth;
     double GraphHeight;
     double Scale, ScaleInv;
+    double ZoomIn, ZoomOut;
 
     jit Jit;
 

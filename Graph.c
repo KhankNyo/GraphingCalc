@@ -455,6 +455,8 @@ graph_state Graph_OnEntry(void)
         .GraphWidth = 20,
         .GraphTop = 10 * AspectRatio,
         .GraphHeight = 20 * AspectRatio,
+        .ZoomIn = 1.05, 
+        .ZoomOut = 1/1.05,
 
         .Bg = {
             .MajorXSpacing = 2.0,
@@ -481,6 +483,7 @@ graph_state Graph_OnEntry(void)
             ProgramMemory, ProgramMemCapacity, 
             DefTableArray, DefTableCapacity
         )
+        && "Not enough memory"
     );
 
 
@@ -568,8 +571,8 @@ void Graph_OnMouseEvent(graph_state *State, const mouse_data *Mouse)
     case MOUSE_WHEEL:
     {
         double ZoomScale = Mouse->Status.Wheel.ScrollTowardUser
-            ? 1.05
-            : 1/1.05;
+            ? State->ZoomIn
+            : State->ZoomOut;
 
         double MouseX = Graph_FromScrX(State->PrevMouseX, (double)State->GraphWidth / Win.Width, State->GraphLeft);
         double MouseY = Graph_FromScrY(State->PrevMouseY, (double)State->GraphHeight / Win.Height, State->GraphTop);
