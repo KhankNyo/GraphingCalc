@@ -995,10 +995,11 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
 
     if (!Jit->Error.Available)
     {
+        assert(Jit->Global.Head && "Missing init routine");
         Jit_Disassemble(Jit);
         return (jit_result) {
             .GlobalData = Jit->Storage.GlobalMemory,
-            .GlobalSymbol = Jit->Global.Head,
+            .GlobalSymbol = Jit->Global.Head->Next,
         };
     }
     else
