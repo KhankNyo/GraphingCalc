@@ -14,7 +14,7 @@ if "clean"=="%1" (
     popd
 ) else (
     if not exist bin\ mkdir bin
-    gcc -O2 -ggdb -Wall -Wextra -Wpedantic -IInclude ^
+    gcc -O2 -march=native -ggdb -Wall -Wextra -Wpedantic -IInclude ^
         Build.c -o bin\Graph.exe ^
         -lgdi32 -luser32 -lkernel32 -Wl,--stack,0x1000000
 )

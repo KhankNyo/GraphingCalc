@@ -1,5 +1,7 @@
 
+#include <string.h> /* memset */
 #include <stdio.h>
+#include <x86intrin.h>
 
 #include "Common.h"
 #include "Platform.h"
@@ -224,6 +226,7 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
     int MainAxisThickness = State->Bg.MainAxisThickness;
 
     /* background */
+#if 0
     u32 *Ptr = Ctx->Ptr;
     for (int y = 0; y < Height; y++)
     {
@@ -232,6 +235,48 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
             *Ptr++ = Bg;
         }
     }
+#elif 0
+    uint VecSize = 4;
+    u32 Size = Height*Width;
+    u32 VecCount = Size / VecSize;
+    u32 Remain = Size % VecSize;
+    u32 *Ptr = Ctx->Ptr;
+    __m128i BackgroundColor = _mm_set1_epi32(Bg);
+    for (uint i = 0; i < VecCount; i++)
+    {
+        _mm_storeu_si128(Ptr, BackgroundColor);
+        Ptr += VecSize;
+    }
+    for (uint i = 0; i < Remain; i++)
+    {
+        *Ptr++ = Bg;
+    }
+#else
+    uint Count = Height*Width;
+    u32 *Ptr = Ctx->Ptr;
+    /* store til cache line */
+    while ((uintptr_t)Ptr % 32 && Count > 0)
+    {
+        *Ptr++ = Bg;
+        Count--;
+    }
+    uint VecSize = 8;
+    uint VecCount = Count / VecSize;
+    uint Remain = Count % VecSize;
+    __m256i BackgroundColor = _mm256_set1_epi32(Bg);
+    /* store til remainder */
+    for (uint i = 0; i < VecCount; i++)
+    {
+        _mm256_store_si256(Ptr, BackgroundColor);
+        Ptr += VecSize;
+    }
+    /* store til end */
+    for (uint i = 0; i < Remain; i++)
+    {
+        *Ptr++ = Bg;
+    }
+
+#endif
     
     /* minor ticks */
     /* x */
