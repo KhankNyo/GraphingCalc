@@ -68,10 +68,6 @@ typedef struct graph_state
 
     background Bg;
     bool8 GraphInvalidated;
-    uint GraphCount;
-    uint ArrayCount[4];
-    double OutputArray[4][4096]; /* OutputArray[Graph index][x value] */
-    double InputArray[4][4096];
 } graph_state;
 
 

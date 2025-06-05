@@ -4,6 +4,7 @@
 #include <x86intrin.h>
 
 #include "Common.h"
+#include "Include/Platform.h"
 #include "Platform.h"
 #include "Jit.h"
 
@@ -175,6 +176,103 @@ static void Graph_DrawLine(
     DrawLineXiaolinWu(Ctx, ScrX0, ScrY0, ScrX1, ScrY1, Thickness, Color); 
 }
 
+/* draw from (x0, y0) to (x1, y0) */
+static void Graph_DrawHorizontalLine(
+    const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double x1, int Thickness, u32 Color)
+{
+#if 0
+    int ScrY = GRAPH_TO_SCR_Y(y0);
+    if (!IN_RANGE(0, ScrY, Ctx->Height - 1))
+        return;
+
+    int ScrX = GRAPH_TO_SCR_X(x0);
+    int ScrXEnd = GRAPH_TO_SCR_X(x1);
+    if (ScrX > ScrXEnd)
+        SWAP(int, ScrX, ScrXEnd);
+    if (ScrXEnd < 0 || Ctx->Height < ScrX)
+        return;
+    if (ScrX < 0)
+        ScrX = 0;
+    if (ScrXEnd > Ctx->Width - 1)
+        ScrXEnd = Ctx->Width - 1;
+
+    for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
+    {
+        int x = ScrX;
+        u32 *Ptr = Ctx->Ptr + IDX(Ctx, x, ScrY + i);
+        while (x <= ScrXEnd)
+        {
+            *Ptr++ = Color;
+            x++;
+        }
+    }
+    
+#else
+    int ScrY = (int)GRAPH_TO_SCR_Y(y0) - (int)Thickness/2;
+    int ScrYEnd = ScrY + Thickness;
+    if (ScrYEnd < 0 || Ctx->Height - 1 < ScrYEnd)
+        return;
+    if (ScrY < 0)
+        ScrY = 0;
+    if (ScrYEnd > Ctx->Height)
+        ScrYEnd = Ctx->Height;
+
+    int ScrX = GRAPH_TO_SCR_X(x0);
+    int ScrXEnd = GRAPH_TO_SCR_X(x1);
+    if (ScrX > ScrXEnd)
+        SWAP(int, ScrX, ScrXEnd);
+    if (ScrXEnd < 0 || Ctx->Width - 1 < ScrX)
+        return;
+    if (ScrX < 0)
+        ScrX = 0;
+    if (ScrXEnd > Ctx->Width)
+        ScrXEnd = Ctx->Width;
+
+    for (int y = ScrY; y < ScrYEnd; y++)
+    {
+        for (int x = ScrX; x < ScrXEnd; x++)
+        {
+            u32 *Ptr = Ctx->Ptr + IDX(Ctx, x, y);
+            *Ptr++ = Color;
+        }
+    }
+#endif
+}
+
+/* draw from point y0 to y0 + Height, (Height > 0) */
+static void Graph_DrawVerticalLine(
+    const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double y1, int Thickness, u32 Color)
+{
+    int ScrX = (int)GRAPH_TO_SCR_X(x0) - (int)Thickness/2;
+    int ScrXEnd = ScrX + Thickness;
+    if (ScrXEnd < 0 || Ctx->Width - 1 < ScrX)
+        return;
+    if (ScrX < 0)
+        ScrX = 0;
+    if (ScrXEnd > Ctx->Width)
+        ScrXEnd = Ctx->Width;
+
+    int ScrY = GRAPH_TO_SCR_Y(y0);
+    int ScrYEnd = GRAPH_TO_SCR_Y(y1);
+    if (ScrY > ScrYEnd)
+        SWAP(int, ScrY, ScrYEnd);
+    if (ScrYEnd < 0 || Ctx->Height - 1 < ScrY)
+        return;
+    if (ScrY < 0)
+        ScrY = 0;
+    if (ScrYEnd > Ctx->Height)
+        ScrYEnd = Ctx->Height;
+
+    for (int y = ScrY; y < ScrYEnd; y++)
+    {
+        for (int x = ScrX; x < ScrXEnd; x++)
+        {
+            u32 *Ptr = Ctx->Ptr + IDX(Ctx, x, y);
+            *Ptr++ = Color;
+        }
+    }
+}
+
 
 
 static void Graph_UpdateScaling(graph_state *State, int CtxWidth)
@@ -226,7 +324,6 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
     int MainAxisThickness = State->Bg.MainAxisThickness;
 
     /* background */
-#if 0
     u32 *Ptr = Ctx->Ptr;
     for (int y = 0; y < Height; y++)
     {
@@ -235,48 +332,6 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
             *Ptr++ = Bg;
         }
     }
-#elif 0
-    uint VecSize = 4;
-    u32 Size = Height*Width;
-    u32 VecCount = Size / VecSize;
-    u32 Remain = Size % VecSize;
-    u32 *Ptr = Ctx->Ptr;
-    __m128i BackgroundColor = _mm_set1_epi32(Bg);
-    for (uint i = 0; i < VecCount; i++)
-    {
-        _mm_storeu_si128(Ptr, BackgroundColor);
-        Ptr += VecSize;
-    }
-    for (uint i = 0; i < Remain; i++)
-    {
-        *Ptr++ = Bg;
-    }
-#else
-    uint Count = Height*Width;
-    u32 *Ptr = Ctx->Ptr;
-    /* store til cache line */
-    while ((uintptr_t)Ptr % 32 && Count > 0)
-    {
-        *Ptr++ = Bg;
-        Count--;
-    }
-    uint VecSize = 8;
-    uint VecCount = Count / VecSize;
-    uint Remain = Count % VecSize;
-    __m256i BackgroundColor = _mm256_set1_epi32(Bg);
-    /* store til remainder */
-    for (uint i = 0; i < VecCount; i++)
-    {
-        _mm256_store_si256(Ptr, BackgroundColor);
-        Ptr += VecSize;
-    }
-    /* store til end */
-    for (uint i = 0; i < Remain; i++)
-    {
-        *Ptr++ = Bg;
-    }
-
-#endif
     
     /* minor ticks */
     /* x */
@@ -293,10 +348,10 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
             if (MinorX <= GraphLeft || GraphRight <= MinorX)
                 continue;
 
-            Graph_DrawLine(
+            Graph_DrawVerticalLine(
                 State, Ctx, 
-                MinorX, GraphTop, 
-                MinorX, GraphBottom,
+                MinorX, 
+                GraphTop, GraphBottom,
                 MinorTickThickness,
                 MinorTickColor
             );
@@ -314,10 +369,10 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
             if (MinorY <= GraphBottom || GraphTop <= MinorY)
                 continue;
 
-            Graph_DrawLine(
+            Graph_DrawHorizontalLine(
                 State, Ctx, 
                 GraphLeft, MinorY, 
-                GraphRight, MinorY,
+                GraphRight,
                 MinorTickThickness,
                 MinorTickColor
             );
@@ -325,7 +380,7 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
     }
 
     /* major ticks/axes */
-    /* x */
+    /* y */
     for (double x = GraphLeft; 
         x < GraphRight + State->Bg.MajorXSpacing; 
         x += State->Bg.MajorXSpacing)
@@ -333,15 +388,15 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
         double MajorX = FloorToMultiple(x, State->Bg.MajorXSpacing);
         if (0 == MajorX || !IN_RANGEX(GraphLeft, MajorX, GraphRight))
             continue;
-        Graph_DrawLine(
+        Graph_DrawVerticalLine(
             State, Ctx, 
-            MajorX, GraphTop, 
-            MajorX, GraphBottom,
+            MajorX, 
+            GraphTop, GraphBottom,
             MajorTickThickness, 
             MajorTickColor
         );
     }
-    /* y */
+    /* x */
     for (double y = GraphBottom; 
         y < GraphTop + State->Bg.MajorYSpacing; 
         y += State->Bg.MajorYSpacing)
@@ -350,28 +405,28 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
 
         if (0 == MajorY || !IN_RANGEX(GraphBottom, MajorY, GraphTop))
             continue;
-        Graph_DrawLine(
+        Graph_DrawHorizontalLine(
             State, Ctx, 
             GraphLeft, MajorY, 
-            GraphRight, MajorY,
+            GraphRight,
             MajorTickThickness, 
             MajorTickColor
         );
     }
     /* Main axes */
-    /* x */
-    Graph_DrawLine(
+    /* y */
+    Graph_DrawVerticalLine(
         State, Ctx, 
         0, GraphTop, 
-        0, GraphBottom,
+        GraphBottom,
         MainAxisThickness, 
         MainAxisColor
     );
-    /* y */
-    Graph_DrawLine(
+    /* x */
+    Graph_DrawHorizontalLine(
         State, Ctx, 
         GraphLeft, 0, 
-        GraphRight, 0, 
+        GraphRight,
         MainAxisThickness, 
         MainAxisColor
     );
@@ -430,7 +485,7 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "f(x) = x*x\n"
+        "f(x) = 1/x\n"
         ;
     sResult = Jit_Compile(&State.Jit, Expr);
     if (sResult.ErrMsg)
@@ -478,36 +533,6 @@ void Graph_OnLoop(graph_state *State)
     State->GraphInvalidated = true;
     if (State->GraphInvalidated)
     {
-        platform_screen_buffer Screen = Platform_GetScreenBuffer();
-        State->GraphInvalidated = false;
-
-
-        /* compute x and y values of each function */
-        assert(Screen.Width < (int)STATIC_ARRAY_SIZE(State->OutputArray[0]));
-        def_table_entry *i = sResult.GlobalSymbol;
-        State->GraphCount = 0;
-        memset(State->ArrayCount, 0, sizeof(State->ArrayCount));
-        while (i && State->GraphCount < STATIC_ARRAY_SIZE(State->OutputArray))
-        {
-            /* TODO: GetFnPtr returns init routine, which it shouldnt do */
-            typedef double (*graphable_fn)(double *GlobalData, double Param);
-            graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, &i->As.Function);
-            for (int x = 0; x < Screen.Width; x++)
-            {
-                double GraphX = GRAPH_FROM_SCR_X(x);
-                double GraphY = Fn(sResult.GlobalData, GraphX);
-
-                if (IN_RANGE(State->GraphTop - State->GraphHeight, GraphY, State->GraphTop))
-                {
-                    int Index = State->ArrayCount[State->GraphCount]++;
-                    State->OutputArray[State->GraphCount][Index] = GRAPH_TO_SCR_Y(GraphY);
-                    State->InputArray[State->GraphCount][Index] = GRAPH_TO_SCR_X(GraphX);
-                }
-
-            }
-            i = i->Next;
-            State->GraphCount++;
-        }
     }
     Platform_RequestRedraw();
 }
@@ -590,8 +615,8 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     };
 
     /* graph each function */
-#if 0
     def_table_entry *i = sResult.GlobalSymbol;
+    uint k = 0;
     while (i)
     {
         if (i->Type == TYPE_FUNCTION && i->As.Function.ParamCount == 1)
@@ -608,29 +633,15 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
                 if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
                 || IN_RANGE(GraphBottom, Y, GraphTop))
                 {
-                    Graph_DrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, Colors[k]);
+                    Graph_DrawLine(State, Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColors[k]);
                 }
                 PrevX = X;
                 PrevY = Y;
             }
-            k = (k + 1) % STATIC_ARRAY_SIZE(Colors);
+            k = (k + 1) % STATIC_ARRAY_SIZE(GraphColors);
         }
         i = i->Next;
     }
-#else
-    for (uint k = 0; k < State->GraphCount; k++)
-    {
-        uint ColorSelect = k % STATIC_ARRAY_SIZE(GraphColors);
-        for (uint i = 1; i < State->ArrayCount[k]; i++)
-        {
-            double PrevX = State->InputArray[k][i - 1];
-            double PrevY = State->OutputArray[k][i - 1];
-            double X = State->InputArray[k][i];
-            double Y = State->OutputArray[k][i];
-            DrawLineXiaolinWu(Ctx, PrevX, PrevY, X, Y, GraphThickness, GraphColors[ColorSelect]);
-        }
-    }
-#endif
 }
 
 
