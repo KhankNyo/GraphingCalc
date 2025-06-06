@@ -304,19 +304,19 @@ static jit_variable *Jit_FindVariable(jit *Jit, const jit_token *VarName)
 
 static jit_expression *Expr_Peek(jit *Jit)
 {
-    assert(Jit->ExprStackSize > 0 && "Expr_Peek");
+    ASSERT(Jit->ExprStackSize > 0, "Expr_Peek");
     return &Jit->ExprStack[Jit->ExprStackSize - 1];
 }
 
 static jit_expression *Expr_Pop(jit *Jit)
 {
-    assert(Jit->ExprStackSize > 0 && "Expr_Pop");
+    ASSERT(Jit->ExprStackSize > 0, "Expr_Pop");
     return &Jit->ExprStack[--Jit->ExprStackSize];
 }
 
 static void Expr_Push(jit *Jit, const jit_expression *E)
 {
-    assert(Jit->ExprStackSize < Jit->ExprStackCapacity && "Bad expr stack size");
+    ASSERT(Jit->ExprStackSize < Jit->ExprStackCapacity, "Bad expr stack size");
     Jit->ExprStack[Jit->ExprStackSize++] = *E;
 }
 
@@ -649,12 +649,11 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
         case TOK_SLASH: Expr_Div(Jit, Result, Right); break;
         case TOK_CARET: 
         {
-            assert(false && "TODO: pow(x, y)");
+            TODO("pow(x, y)");
         } break;
         default: 
         {
-            /* unreachable */
-            assert(false && "UNREACHABLE");
+            UNREACHABLE();
         } break;
         }
 
@@ -995,7 +994,7 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
 
     if (!Jit->Error.Available)
     {
-        assert(Jit->Global.Head && "Missing init routine");
+        ASSERT(Jit->Global.Head, "Missing init routine");
         Jit_Disassemble(Jit);
         return (jit_result) {
             .GlobalData = Jit->Storage.GlobalMemory,
@@ -1018,8 +1017,8 @@ jit_init Jit_GetInit(jit *Jit, const jit_result *Result)
 
 void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn)
 {
-    assert(Fn->Dbg.Location < Jit->Emitter.BufferSize);
-    assert(Fn->Dbg.Location + Fn->Dbg.ByteCount <= Jit->Emitter.BufferSize);
+    ASSERT(Fn->Dbg.Location < Jit->Emitter.BufferSize, "Function with invalid location");
+    ASSERT(Fn->Dbg.Location + Fn->Dbg.ByteCount <= Jit->Emitter.BufferSize, "Function with invalid size");
     u8 *FnPtr = Jit->Emitter.Buffer + Fn->Dbg.Location;
     return FnPtr;
 }

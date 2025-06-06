@@ -447,14 +447,14 @@ graph_state Graph_OnEntry(void)
 
     };
     Graph_UpdateScaling(&State, ScrWidth);
-    assert( 0 == Jit_Init(
+    ASSERT(0 == Jit_Init(
             &State.Jit, 
             Scratchpad, ScratchpadCapacity,
             GlobalMemory, GlobalMemCapacity, 
             ProgramMemory, ProgramMemCapacity, 
             DefTableArray, DefTableCapacity
-        )
-        && "Not enough memory"
+        ),
+        "Not enough memory"
     );
 
 

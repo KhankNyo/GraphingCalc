@@ -185,12 +185,12 @@ int TargetEnv_GetArgBaseReg(void)
 }
 int TargetEnv_GetArgReg(int ArgIndex)
 {
-    assert(ArgIndex < 4 && "bad arg index");
+    ASSERT(ArgIndex < 4, "bad arg index");
     return ArgIndex + 1;
 }
 int TargetEnv_GetArgOffset(int StackTop, int ArgIndex)
 {
-    assert(ArgIndex >= 4 && "bad arg index");
+    ASSERT(ArgIndex >= 4, "bad arg index");
     return (ArgIndex + 1) * sizeof(double) + StackTop;
 }
 int TargetEnv_GetReturnReg(void)
@@ -354,7 +354,7 @@ void Emit_FunctionExit(jit_emitter *Emitter)
 
 void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
 {
-    assert(FunctionLocation + sizeof(sPrologue) <= Emitter->BufferCapacity);
+    ASSERT(FunctionLocation + sizeof(sPrologue) <= Emitter->BufferCapacity, "bad function location");
     u8 *Location = Emitter->Buffer 
         + FunctionLocation 
         + sizeof(sPrologue) - 4;
@@ -380,7 +380,7 @@ int Emit_Jump(jit_emitter *Emitter)
 
 void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst)
 {
-    assert(JumpInsLocation < Emitter->BufferCapacity);
+    ASSERT(JumpInsLocation < Emitter->BufferCapacity, "patch jump instruction location");
     i32 Rel32 = (i64)Dst - (i64)(JumpInsLocation + 5);
     MemCpy(Emitter->Buffer + JumpInsLocation + 1, &Rel32, sizeof Rel32);
 }
@@ -518,7 +518,7 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type, const char
 
 uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64])
 {
-    assert(MemorySize > 0);
+    ASSERT(MemorySize > 0, "bad memory size");
     disasm_data Disasm = {
         .Memory = Memory,
         .MemoryCapacity = MemorySize,

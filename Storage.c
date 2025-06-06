@@ -47,7 +47,7 @@ jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalMemCapacity)
 
 void Storage_PushScope(jit_storage_manager *S)
 {
-    assert(S->Scope < 2);
+    ASSERT(S->Scope < (int)STATIC_ARRAY_SIZE(S->StackSize), "invalid scope count");
     S->Scope++;
     CURR_SCOPE(S->StackSize) = TargetEnv_GetShadowSpaceSize(); /* shadow space */
     CURR_SCOPE(S->MaxStackSize) = CURR_SCOPE(S->StackSize);
@@ -57,7 +57,7 @@ void Storage_PushScope(jit_storage_manager *S)
 
 void Storage_PopScope(jit_storage_manager *S)
 {
-    assert(S->Scope > 0);
+    ASSERT(S->Scope > 0, "invalid scope count");
     S->Scope--;
 }
 
@@ -102,7 +102,7 @@ void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
 
 jit_expression Storage_ForceAllocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(Reg < TARGETENV_REG_COUNT);
+    ASSERT(Reg < TARGETENV_REG_COUNT, "invalid reg");
     CURR_SCOPE(S->BusyRegCount) += !CURR_SCOPE(S->RegIsBusy)[Reg];
     CURR_SCOPE(S->RegIsBusy)[Reg] = true;
 
@@ -115,7 +115,8 @@ jit_expression Storage_ForceAllocateReg(jit_storage_manager *S, uint Reg)
 jit_expression Storage_AllocateReg(jit_storage_manager *S)
 {
     int Reg = Storage_TryAllocateReg(S);
-    assert(Reg != -1 && "TODO: register spilling in expression");
+    if (-1 == Reg)
+        TODO("registeer spilling in expression");
     return (jit_expression) {
         .Storage = STORAGE_REG,
         .As.Reg = Reg,
@@ -124,7 +125,7 @@ jit_expression Storage_AllocateReg(jit_storage_manager *S)
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg)
 {
-    assert(Reg < TARGETENV_REG_COUNT - 1);
+    ASSERT(Reg < TARGETENV_REG_COUNT - 1, "invalid reg");
 
     CURR_SCOPE(S->BusyRegCount) -= CURR_SCOPE(S->RegIsBusy)[Reg];
     CURR_SCOPE(S->RegIsBusy)[Reg] = false;
@@ -146,7 +147,7 @@ jit_expression Storage_AllocateStack(jit_storage_manager *S)
 
 jit_expression Storage_AllocateGlobal(jit_storage_manager *S)
 {
-    assert(S->GlobalSize < S->GlobalCapacity);
+    ASSERT(S->GlobalSize < S->GlobalCapacity, "out of memory");
     jit_expression Global = {
         .Storage = STORAGE_MEM,
         .As.Mem = {
@@ -167,7 +168,7 @@ jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const)
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset)
 {
-    assert(IN_RANGE(0, GlobalOffset, (i64)S->GlobalCapacity));
+    ASSERT(IN_RANGE(0, GlobalOffset, (i64)S->GlobalCapacity), "invalid const offset");
     return S->GlobalMemory[GlobalOffset / sizeof(double)];
 }
 

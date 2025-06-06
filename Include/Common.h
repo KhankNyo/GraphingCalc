@@ -1,9 +1,16 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <assert.h>
 #include <stdint.h>
+#include <assert.h>
 
+#define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
+#define ASSERT(x, msg) assert((x) && (msg))
+#define TODO(msg) assert(false && "TODO: "msg)
+#define UNREACHABLE() do {\
+    assert(false && "Unreachable");\
+    *((volatile char *)0) = 0;\
+} while (0)
 #define SWAP(typ, a, b) do {\
     typ t = a;\
     a = b;\

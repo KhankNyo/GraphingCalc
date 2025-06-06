@@ -67,8 +67,9 @@ static void Error_AtStrVA(jit_error *E, const char *Str, int Len, int Line, int 
     PUSH_STR(vsnprintf, Fmt, Args);
     Error_MsgPushChar(E, '\n', 1);
 
+    ASSERT(E->MsgLen <= 0, "unreachable");
+
     /* null terminate */
-    assert(E->MsgLen > 0 && "UNREACHABLE");
     if (E->MsgLen < sizeof E->Msg)
     {
         E->Msg[E->MsgLen - 1] = '\0';
@@ -104,19 +105,19 @@ void Error_AtToken(jit_error *E, const jit_token *Token, const char *Fmt, ...)
 
 void Error_PushMarker(jit_error *E, const jit_token *Token)
 {
-    assert(E->MarkerCount < sizeof E->Marker);
+    ASSERT(E->MarkerCount < sizeof E->Marker, "Error_PushMarker");
     E->Marker[E->MarkerCount++] = *Token;
 }
 
 void Error_PopMarker(jit_error *E)
 {
-    assert(E->MarkerCount > 0 && "Error_PopMarker");
+    ASSERT(E->MarkerCount > 0, "Error_PopMarker");
     E->MarkerCount--;
 }
 
 void Error_WithMarker(jit_error *E, const jit_token *MarkerEnd, const char *Fmt, ...)
 {
-    assert(E->MarkerCount > 0 && "Error_WithMarker");
+    ASSERT(E->MarkerCount > 0, "Error_WithMarker");
     const jit_token *MarkerBegin = &E->Marker[E->MarkerCount - 1];
 
     va_list Args;
