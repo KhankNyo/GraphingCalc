@@ -36,7 +36,7 @@ void Storage_PopStack(jit_storage_manager *S, int Size)
 
 
 
-jit_storage_manager Storage_Init(double *GlobalMemory, uint GlobalMemCapacity)
+jit_storage_manager Storage_Init(void *GlobalMemory, uint GlobalMemCapacity)
 {
     jit_storage_manager S = {
         .GlobalMemory = GlobalMemory,
@@ -61,10 +61,11 @@ void Storage_PopScope(jit_storage_manager *S)
     S->Scope--;
 }
 
-void Storage_Reset(jit_storage_manager *S)
+void Storage_Reset(jit_storage_manager *S, int DataSize)
 {
     S->Scope = 0;
     S->GlobalSize = 0;
+    S->DataSize = DataSize;
 }
 
 
@@ -77,7 +78,7 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
         if (CURR_SCOPE(S->RegIsBusy)[i])
         {
             int RegToSpill = TargetEnv_GetArgReg(i);
-            i32 StackOffset = Storage_PushStack(S, sizeof(double));
+            i32 StackOffset = Storage_PushStack(S, S->DataSize);
 
             /* spill it to stack memory */
             int Count = Spill.Count;
@@ -137,7 +138,7 @@ jit_expression Storage_AllocateStack(jit_storage_manager *S)
     jit_expression Stack = {
         .Storage = STORAGE_MEM,
         .As.Mem = {
-            .Offset = Storage_PushStack(S, sizeof(double)),
+            .Offset = Storage_PushStack(S, S->DataSize),
             .BaseReg = TargetEnv_GetStackFrameReg(),
         },
     };
@@ -151,25 +152,51 @@ jit_expression Storage_AllocateGlobal(jit_storage_manager *S)
     jit_expression Global = {
         .Storage = STORAGE_MEM,
         .As.Mem = {
-            .Offset = S->GlobalSize * sizeof(double),
+            .Offset = S->GlobalSize,
             .BaseReg = TargetEnv_GetGlobalPtrReg(),
         },
     };
-    S->GlobalSize++;
+    S->GlobalSize += S->DataSize;
     return Global;
 }
 
 jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const)
 {
     jit_expression Global = Storage_AllocateGlobal(S);
-    S->GlobalMemory[Global.As.Mem.Offset / sizeof(double)] = Const;
+    u8 *Ptr = (u8 *)S->GlobalMemory + Global.As.Mem.Offset;
+    if (sizeof(float) == S->DataSize)
+    {
+        float Const32 = Const;
+        MemCpy(Ptr, &Const32, S->DataSize);
+    }
+    else if (sizeof(double) == S->DataSize)
+    {
+        MemCpy(Ptr, &Const, S->DataSize);
+    }
+    else UNREACHABLE();
     return Global;
 }
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset)
 {
     ASSERT(IN_RANGE(0, GlobalOffset, (i64)S->GlobalCapacity), "invalid const offset");
-    return S->GlobalMemory[GlobalOffset / sizeof(double)];
+    ASSERT(IN_RANGE(0, GlobalOffset + S->DataSize, (i64)S->GlobalCapacity), "invalid const offset && size");
+
+    const u8 *Ptr = (const u8 *)S->GlobalMemory + GlobalOffset;
+    if (sizeof(float) == S->DataSize)
+    {
+        float Out;
+        MemCpy(&Out, Ptr, S->DataSize);
+        return (double)Out;
+    }
+    else if (sizeof(double) == S->DataSize)
+    {
+        double Out;
+        MemCpy(&Out, Ptr, S->DataSize);
+        return Out;
+    }
+    else UNREACHABLE();
+    return 0;
 }
 
 int Storage_GetMaxStackSize(const jit_storage_manager *S)

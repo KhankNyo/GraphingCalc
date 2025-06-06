@@ -70,6 +70,18 @@ static const u8 sPrologue[] = {
     0x48, 0x89, MODRM(3, RSP, RBP),             /* mov rbp, rsp */
     0x48, 0x81, MODRM(3, 5, RSP), 0, 0, 0, 0    /* sub rsp, 0 */
 };
+static const u8 sStoreSingle32[] = {
+    0x66, 0x0F, 0x7E,
+};
+static const u8 sStoreSingle64[] = {
+    0x66, 0xF, 0xD6,
+};
+static const u8 sLoadSingle32[] = {
+    0x66, 0x0F, 0x6E,
+};
+static const u8 sLoadSingle64[] = {
+    0xF3, 0x0F, 0x7E
+};
 
 static int Emit(jit_emitter *Emitter, int Count, ...)
 {
@@ -128,7 +140,7 @@ static void Emit_GenericModRm(jit_emitter *Emitter, int Reg, int Rm, i32 Displac
 
 static int Emit_FloatOpcode(jit_emitter *Emitter, u8 Opcode, int DstReg, int SrcBase, i32 SrcOffset)
 {
-    int InstructionOffset = Emit(Emitter, 3, 0xF2, 0x0F, Opcode);
+    int InstructionOffset = Emit(Emitter, 3, Emitter->FloatOpcode, 0x0F, Opcode);
     Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
     return InstructionOffset;
 }
@@ -136,11 +148,12 @@ static int Emit_FloatOpcode(jit_emitter *Emitter, u8 Opcode, int DstReg, int Src
 static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int SrcReg)
 {
     u8 ModRm = MODRM(3, DstReg, SrcReg);
-    Emit(Emitter, 4, 0xF2, 0x0F, Opcode, ModRm);
+    Emit(Emitter, 4, Emitter->FloatOpcode, 0x0F, Opcode, ModRm);
 }
 
 
 
+/* ms x64 calling conv */
 int TargetEnv_GetShadowSpaceSize(void)
 {
     return 32;
@@ -162,10 +175,11 @@ int TargetEnv_GetStackFrameReg(void)
 {
     return RBP;
 }
-int TargetEnv_GetArgStackSize(int ArgCount)
+int TargetEnv_GetArgStackSize(int ArgCount, int DataSize)
 {
+    ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
     /* rcx as global ptr reg, but we won't store it on stack */
-    int StackSize = (ArgCount + 1) * sizeof(double);
+    int StackSize = (ArgCount + 1) * DataSize;
     if (StackSize < 32)
         return 32;
     return StackSize;
@@ -188,10 +202,11 @@ int TargetEnv_GetArgReg(int ArgIndex)
     ASSERT(ArgIndex < 4, "bad arg index");
     return ArgIndex + 1;
 }
-int TargetEnv_GetArgOffset(int StackTop, int ArgIndex)
+int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize)
 {
+    ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
     ASSERT(ArgIndex >= 4, "bad arg index");
-    return (ArgIndex + 1) * sizeof(double) + StackTop;
+    return (ArgIndex + 1) * DataSize + StackTop;
 }
 int TargetEnv_GetReturnReg(void)
 {
@@ -210,9 +225,26 @@ jit_emitter Emitter_Init(u8 *Buffer, uint BufferCapacity)
     return Emitter;
 }
 
-void Emitter_Reset(jit_emitter *Emitter)
+void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
 {
+    STATIC_ASSERT(sizeof sStoreSingle32 == sizeof Emitter->StoreSingle, "unreachable");
+    STATIC_ASSERT(sizeof sStoreSingle64 == sizeof Emitter->StoreSingle, "unreachable");
+    STATIC_ASSERT(sizeof sLoadSingle32 == sizeof Emitter->LoadSingle, "unreachable");
+    STATIC_ASSERT(sizeof sLoadSingle64 == sizeof Emitter->LoadSingle, "unreachable");
+
     Emitter->BufferSize = 0;
+    if (EmitFloat32Instructions)
+    {
+        Emitter->FloatOpcode = 0xF3;
+        MemCpy(Emitter->StoreSingle, sStoreSingle32, sizeof sStoreSingle32);
+        MemCpy(Emitter->LoadSingle, sLoadSingle32, sizeof sLoadSingle32);
+    }
+    else
+    {
+        Emitter->FloatOpcode = 0xF2;
+        MemCpy(Emitter->StoreSingle, sStoreSingle64, sizeof sStoreSingle64);
+        MemCpy(Emitter->LoadSingle, sLoadSingle64, sizeof sLoadSingle64);
+    }
 }
 
 
@@ -229,12 +261,16 @@ void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg)
 void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
 {
     /* movq [base + offset], src */
-    Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
+    EmitArray(Emitter, 
+        Emitter->StoreSingle,
+        sizeof Emitter->StoreSingle
+    );
     Emit_GenericModRm(Emitter, SrcReg, DstBase, SrcOffset);
 }
 
 void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
 {
+#if 0
     /* movq dst, [base + offset] */
     u8 *Curr = Emitter->Buffer + Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
     Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
@@ -256,6 +292,33 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
         Curr[1] = 0x0F;
         Curr[2] = 0x7E;
     }
+#else
+    /* emit it as a store instruction initially */
+    uint PrevSize = EmitArray(Emitter, 
+        Emitter->StoreSingle, 
+        sizeof Emitter->StoreSingle
+    );
+    Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
+    uint InstructionLength = Emitter->BufferSize - PrevSize;
+
+    /* compared the emitted instruction with the last*/
+    u8 *PrevIns = Emitter->Buffer + PrevSize - InstructionLength;
+    u8 *CurrIns = Emitter->Buffer + PrevSize;
+    if (Emitter->BufferSize >= 2*InstructionLength
+    && MemEqu(PrevIns, CurrIns, InstructionLength))
+    {
+        /* if matched, 
+         * this current instruction was trying to read the value we just stored into the same regsiter, 
+         * optimize it out */
+        //Emitter->BufferSize -= InstructionLength;
+    }
+    else
+    {
+        /* otherwise, change the emitted instruction into a load */
+        for (uint i = 0; i < sizeof Emitter->LoadSingle; i++)
+            CurrIns[i] = Emitter->LoadSingle[i];
+    }
+#endif
 }
 
 
@@ -315,8 +378,8 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
      * mov rbp, rsp
      * sub rsp, memsize
      * ; x64 windows: using shadow space of 32 bytes below return addr as argument storage
-     * ; arg[i] = [rbp + 0x10 + i*8]
-     * movsd [rbp + i*8], xmm(i) 
+     * ; arg[i] = [rbp + 0x18 + i*8]
+     * movsd [rbp + i*8 + 0x18], xmm(i) 
      * ...
      * */
     while (Emitter->BufferSize % 0x10 != 0)
@@ -326,7 +389,8 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
     uint FunctionLocation = EmitArray(Emitter, sPrologue, sizeof sPrologue);
     for (int i = 0; i < ParamCount; i++)
     {
-        /* 0x10 = rbp and retaddr, 0x8 = shadow space for first argument (rcx/global ptr reg) */
+        /* 0x10 = rbp and retaddr, 
+         * 0x8 = shadow space for first argument (rcx/global ptr reg) */
         int Displacement = 0x10 + 0x8 + i*sizeof(double); 
         if (i < TargetEnv_GetArgRegCount())
         {
@@ -596,7 +660,6 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
         u8 Second = ConsumeByte(&Disasm);
         if (0x0F == Second)
         {
-            disasm_modrm_type ModRmType = MODRM_DST_SRC;
             switch (ConsumeByte(&Disasm))
             {
             case 0x58: WriteInstruction(&Disasm, "addsd "); break;
@@ -607,22 +670,32 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             default:  
             {
                 Unknown = true;
-            } goto Done;
+            } goto Out;
             }
 
-            X64DisasmModRM(&Disasm, ModRmType, sXmmReg);
-Done:
-            ;
+            X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
         }
         else Unknown = true;
     } break;
     case 0xF3:
     {
         u8 Second = ConsumeByte(&Disasm);
-        u8 Third = ConsumeByte(&Disasm);
-        if (0x0F == Second && 0x7E == Third)
+        if (0x0F == Second)
         {
-            WriteInstruction(&Disasm, "movq ");
+            u8 Third = ConsumeByte(&Disasm);
+            switch (Third)
+            {
+            case 0x58: WriteInstruction(&Disasm, "addss "); break;
+            case 0x5C: WriteInstruction(&Disasm, "subss "); break;
+            case 0x59: WriteInstruction(&Disasm, "mulss "); break;
+            case 0x5E: WriteInstruction(&Disasm, "divss "); break;
+            case 0x51: WriteInstruction(&Disasm, "sqrtss "); break;
+            case 0x7E: WriteInstruction(&Disasm, "movq "); break;
+            default: 
+            {
+                Unknown = true;
+            } goto Out;
+            }
             X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
         }
         else Unknown = true;
@@ -630,15 +703,37 @@ Done:
     case 0x66:
     {
         u8 Second = ConsumeByte(&Disasm);
-        u8 Third = ConsumeByte(&Disasm);
-        if (0x0F == Second && 0xD6 == Third)
+        if (0x0F == Second)
         {
-            WriteInstruction(&Disasm, "movq ");
-            X64DisasmModRM(&Disasm, MODRM_SRC_DST, sXmmReg);
+            u8 Third = ConsumeByte(&Disasm);
+            switch (Third)
+            {
+            case 0xD6: 
+            {
+                WriteInstruction(&Disasm, "movq ");
+                X64DisasmModRM(&Disasm, MODRM_SRC_DST, sXmmReg);
+            } break;
+            case 0x6E:
+            {
+                WriteInstruction(&Disasm, "movd ");
+                X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+            } break;
+            case 0x7E:
+            {
+                WriteInstruction(&Disasm, "movd ");
+                X64DisasmModRM(&Disasm, MODRM_SRC_DST, sXmmReg);
+            } break;
+            default: 
+            {
+                Unknown = true;
+            } goto Out;
+            }
         }
         else Unknown = true;
     } break;
     }
+
+Out: 
     if (Unknown)
     {
         WriteInstruction(&Disasm, "???");

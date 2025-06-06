@@ -67,7 +67,7 @@ static void Error_AtStrVA(jit_error *E, const char *Str, int Len, int Line, int 
     PUSH_STR(vsnprintf, Fmt, Args);
     Error_MsgPushChar(E, '\n', 1);
 
-    ASSERT(E->MsgLen <= 0, "unreachable");
+    ASSERT(E->MsgLen > 0, "unreachable");
 
     /* null terminate */
     if (E->MsgLen < sizeof E->Msg)

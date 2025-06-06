@@ -404,6 +404,7 @@ static void Graph_DrawBackground(const graph_state *State, platform_screen_buffe
 }
 
 
+typedef float flt;
 static jit_result sResult;
 graph_state Graph_OnEntry(void)
 {
@@ -418,7 +419,7 @@ graph_state Graph_OnEntry(void)
     uint DefTableCapacity = 4*1024;
     void *Scratchpad = Platform_AllocateMemory(ScratchpadCapacity);
     void *ProgramMemory = Platform_AllocateMemory(ProgramMemCapacity);
-    double *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(double));
+    flt *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(flt));
     def_table_entry *DefTableArray = Platform_AllocateMemory(DefTableCapacity * sizeof(def_table_entry));
 
     graph_state State = {
@@ -461,7 +462,7 @@ graph_state Graph_OnEntry(void)
     const char *Expr = 
         "f(x) = 1/x\n"
         ;
-    sResult = Jit_Compile(&State.Jit, Expr);
+    sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)
     {
         printf("%s\n", sResult.ErrMsg);
@@ -470,7 +471,7 @@ graph_state Graph_OnEntry(void)
     {
         printf("Compilation OK, calling init: \n");
         Platform_EnableExecution(ProgramMemory, ProgramMemCapacity);
-        jit_init Init = Jit_GetInit(&State.Jit, &sResult);
+        jit_init32 Init = Jit_GetInit32(&State.Jit, &sResult);
         Init(GlobalMemory);
         printf("Call OK.\n");
     }
@@ -595,15 +596,15 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     {
         if (i->Type == TYPE_FUNCTION && i->As.Function.ParamCount == 1)
         {
-            typedef double (*graphable_fn)(double *GlobalData, double Param);
+            typedef flt (*graphable_fn)(flt *GlobalData, flt Param);
             graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, &i->As.Function);
 
-            double PrevX = GraphLeft;
-            double PrevY = Fn(sResult.GlobalData, PrevX);
+            flt PrevX = GraphLeft;
+            flt PrevY = Fn(sResult.GlobalData, PrevX);
             for (int x = 1; x < Width; x++)
             {
-                double X = GRAPH_FROM_SCR_X(x);
-                double Y = Fn(sResult.GlobalData, X);
+                flt X = GRAPH_FROM_SCR_X(x);
+                flt Y = Fn(sResult.GlobalData, X);
                 if (IN_RANGE(GraphBottom, PrevY, GraphTop) 
                 || IN_RANGE(GraphBottom, Y, GraphTop))
                 {

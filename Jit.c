@@ -252,8 +252,9 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
 }
 
 
-static void Jit_Reset(jit *Jit, const char *Expr)
+static void Jit_Reset(jit *Jit, const char *Expr, jit_compilation_flags Flags)
 {
+    Jit->Flags = Flags;
     Jit->Start = Expr;
     Jit->End = Expr;
     Jit->Line = 1;
@@ -264,10 +265,13 @@ static void Jit_Reset(jit *Jit, const char *Expr)
     Jit->VarDeclEnd = -1;
     ConsumeToken(Jit);
 
-    Storage_Reset(&Jit->Storage);
     Error_Reset(&Jit->Error);
-    Emitter_Reset(&Jit->Emitter);
     DefTable_Reset(&Jit->Global);
+
+    bool8 EmitFloat32Instructions = 0 != (Flags & JIT_COMPFLAG_FLOAT32);
+    int FltSize = EmitFloat32Instructions? sizeof(float) : sizeof(double);
+    Storage_Reset(&Jit->Storage, FltSize);
+    Emitter_Reset(&Jit->Emitter, EmitFloat32Instructions);
 }
 
 
@@ -361,6 +365,9 @@ static void Expr_Neg(jit *Jit)
 }
  
 
+
+
+
 static void Jit_EmitLoadConst(jit *Jit, int Reg, double Const)
 {
     if (0.0 == Const || -0.0 == Const)
@@ -435,7 +442,7 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
 {
     /* Consumed '(' */
     int ArgCount = 0;
-    int ArgStackSize = TargetEnv_GetArgStackSize(Fn->ParamCount);
+    int ArgStackSize = TargetEnv_GetArgStackSize(Fn->ParamCount, Jit->Storage.DataSize);
     int ArgStackTop = Storage_PushStack(&Jit->Storage, ArgStackSize);
 
     Error_PushMarker(&Jit->Error, &Jit->Curr);
@@ -470,7 +477,7 @@ static bool8 Expr_ParseArgs(jit *Jit, const jit_function *Fn)
             }
             else /* memory argument */
             {
-                int ArgOffset = TargetEnv_GetArgOffset(ArgStackTop, ArgCount);
+                int ArgOffset = TargetEnv_GetArgOffset(ArgStackTop, ArgCount, Jit->Storage.DataSize);
                 int ArgBaseReg = TargetEnv_GetArgBaseReg();
                 int Tmp = Jit_CopyToReg(Jit, Storage_AllocateReg(&Jit->Storage).As.Reg, ArgExpr).As.Reg;
                 Emit_Store(&Jit->Emitter, Tmp, ArgBaseReg, ArgOffset);
@@ -665,7 +672,7 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
         } break;
         case STORAGE_MEM:
         {
-            Storage_PopStack(&Jit->Storage, sizeof(double));
+            Storage_PopStack(&Jit->Storage, Jit->Storage.DataSize);
         } break;
         case STORAGE_CONST:
         {
@@ -923,7 +930,7 @@ static u32 Jit_Hash(const char *Str, int StrLen)
 uint Jit_Init(
     jit *Jit,
     void *Scratchpad, uint ScratchpadCapacity, 
-    double *GlobalMemory, uint GlobalMemCapacity, 
+    void *GlobalMemory, uint GlobalMemCapacity, 
     void *ProgramMemory, uint ProgramMemCapacity,
     def_table_entry *DefTableArray, uint DefTableCapacity
 )
@@ -961,9 +968,9 @@ void Jit_Destroy(jit *Jit)
 
 
 
-jit_result Jit_Compile(jit *Jit, const char *Expr)
+jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
 {
-    Jit_Reset(Jit, Expr);
+    Jit_Reset(Jit, Expr, Flags);
 
     jit_function *Init = DefineFunction(Jit, "init", 4);
     {
@@ -1010,9 +1017,14 @@ jit_result Jit_Compile(jit *Jit, const char *Expr)
 }
 
 
-jit_init Jit_GetInit(jit *Jit, const jit_result *Result)
+jit_init32 Jit_GetInit32(jit *Jit, const jit_result *Result)
 {
-    return (jit_init)Jit_GetFunctionPtr(Jit, &Result->GlobalSymbol->As.Function);
+    return (jit_init32)Jit_GetFunctionPtr(Jit, &Result->GlobalSymbol->As.Function);
+}
+
+jit_init64 Jit_GetInit64(jit *Jit, const jit_result *Result)
+{
+    return (jit_init64)Jit_GetFunctionPtr(Jit, &Result->GlobalSymbol->As.Function);
 }
 
 void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn)
