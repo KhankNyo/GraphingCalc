@@ -180,34 +180,6 @@ static void Graph_DrawLine(
 static void Graph_DrawHorizontalLine(
     const graph_state *State, platform_screen_buffer *Ctx, double x0, double y0, double x1, int Thickness, u32 Color)
 {
-#if 0
-    int ScrY = GRAPH_TO_SCR_Y(y0);
-    if (!IN_RANGE(0, ScrY, Ctx->Height - 1))
-        return;
-
-    int ScrX = GRAPH_TO_SCR_X(x0);
-    int ScrXEnd = GRAPH_TO_SCR_X(x1);
-    if (ScrX > ScrXEnd)
-        SWAP(int, ScrX, ScrXEnd);
-    if (ScrXEnd < 0 || Ctx->Height < ScrX)
-        return;
-    if (ScrX < 0)
-        ScrX = 0;
-    if (ScrXEnd > Ctx->Width - 1)
-        ScrXEnd = Ctx->Width - 1;
-
-    for (int i = -Thickness/2; i < Thickness/2 + Thickness%2; i++)
-    {
-        int x = ScrX;
-        u32 *Ptr = Ctx->Ptr + IDX(Ctx, x, ScrY + i);
-        while (x <= ScrXEnd)
-        {
-            *Ptr++ = Color;
-            x++;
-        }
-    }
-    
-#else
     int ScrY = (int)GRAPH_TO_SCR_Y(y0) - (int)Thickness/2;
     int ScrYEnd = ScrY + Thickness;
     if (ScrYEnd < 0 || Ctx->Height - 1 < ScrYEnd)
@@ -236,7 +208,6 @@ static void Graph_DrawHorizontalLine(
             *Ptr++ = Color;
         }
     }
-#endif
 }
 
 /* draw from point y0 to y0 + Height, (Height > 0) */
