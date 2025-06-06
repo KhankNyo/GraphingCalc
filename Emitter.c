@@ -287,7 +287,7 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
         /* if matched, 
          * this current instruction was trying to read the value we just stored into the same regsiter, 
          * optimize it out */
-        //Emitter->BufferSize -= InstructionLength;
+        Emitter->BufferSize -= InstructionLength;
     }
     else
     {

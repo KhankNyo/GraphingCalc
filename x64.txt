@@ -1,15 +1,25 @@
 
-addsd: F2 0F 58 /r ADDSD xmm1, xmm2/m64
-subsd: F2 0F 5C /r SUBSD xmm1, xmm2/m64
-mulsd: F2 0F 59 /r MULSD xmm1,xmm2/m64
-divsd: F2 0F 5E /r DIVSD xmm1, xmm2/m64
+float64: 
+addsd: 	F2 0F 58 /r ADDSD xmm1, xmm2/m64
+subsd: 	F2 0F 5C /r SUBSD xmm1, xmm2/m64
+mulsd: 	F2 0F 59 /r MULSD xmm1,xmm2/m64
+divsd: 	F2 0F 5E /r DIVSD xmm1, xmm2/m64
 sqrtsd: F2 0F 51 /r SQRTSD xmm1,xmm2/m64
-
-movaps: 0F 28 /r MOVAPS xmm1, xmm2/m128 (reg-reg)
 movq:   F3 0F 7E /r MOVQ xmm1, xmm2/m64 (reg-mem)
         66 0F D6 /r MOVQ xmm2/m64, xmm1 (mem-reg)
-xorps: 0F 57 /r XORPS xmm1, xmm2/m128 // for negation 
 
+float32: 
+addss: 	F3 0F 58 /r ADDSS xmm1, xmm2/m32
+subss: 	F3 0F 5C /r SUBSS xmm1, xmm2/m32
+mulss: 	F3 0F 59 /r MULSS xmm1,xmm2/m32
+divss: 	F3 0F 5E /r DIVSS xmm1, xmm2/m32
+sqrtss: F3 0F 51 /r SQRTSS xmm1, xmm2/m32
+movd: 	66 0F 6E /r MOVD xmm, r/m32	(reg-mem)
+	66 0F 7E /r MOVD r/m32, xmm	(mem-reg)
+
+common: 
+movaps: 0F 28 /r MOVAPS xmm1, xmm2/m128 (reg-reg)
+xorps: 	0F 57 /r XORPS xmm1, xmm2/m128 			// for zeroing
 call: E8 rel32
 ret: C3
 push: 50 + reg
