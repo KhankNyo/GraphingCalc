@@ -270,29 +270,6 @@ void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
 
 void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
 {
-#if 0
-    /* movq dst, [base + offset] */
-    u8 *Curr = Emitter->Buffer + Emit(Emitter, 3, 0x66, 0x0F, 0xD6);
-    Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
-    const u8 *Next = Emitter->Buffer + Emitter->BufferSize;
-
-    /* if last instruction was a store to the same location that we'll be loading from, 
-     * omit the load */
-    uint InstructionLength = Next - Curr;
-    u8 *Prev = Curr - InstructionLength;
-    if (Emitter->BufferSize >= 2*InstructionLength
-    && MemEqu(Prev, Curr, InstructionLength))
-    {
-        Emitter->BufferSize -= InstructionLength;
-        return;
-    }
-    else 
-    {
-        Curr[0] = 0xF3;
-        Curr[1] = 0x0F;
-        Curr[2] = 0x7E;
-    }
-#else
     /* emit it as a store instruction initially */
     uint PrevSize = EmitArray(Emitter, 
         Emitter->StoreSingle, 
@@ -318,7 +295,6 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
         for (uint i = 0; i < sizeof Emitter->LoadSingle; i++)
             CurrIns[i] = Emitter->LoadSingle[i];
     }
-#endif
 }
 
 
