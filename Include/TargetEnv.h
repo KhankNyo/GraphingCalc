@@ -62,27 +62,21 @@ int Emit_Jump(jit_emitter *Emitter);
 void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst);
 
 
-
-/* x64 */
-#if defined(_M_X64) || defined(_M_AMD64)\
-    || defined(__amd64) || defined(__amd64__)\
-    || defined(__x86_64) || defined(__x86_64__)
-
+/* TARGETENV_<platform name> must be defined via compilation flags */
+/* x64 Windows */
+#if defined(TARGETENV_X64_WINDOWS)
 static inline bool8 TargetEnv_x64_IsAVXSupported(void);
-
-    /* win32 */
-#   if defined(_WIN32)
-#       include "x64_Windows_TargetEnv.h"
-#       include "x64_Windows_Emitter.h"
-    /* other OS */
-#   else 
-#       error("Unsupported x64 OS.")
-#   endif
-
-/* other arch */
+#   include "x64_Windows_TargetEnv.h"
+#   include "x64_Windows_Emitter.h"
+/* other platforms */
 #else 
-#   error("Unsupported architecture.")
-#endif 
+#   error("Unsupported target environment.")
+#endif
+
+/* macros */
+#if !defined(TARGETENV_REG_COUNT)
+#   error("target environment must define TARGETENV_REG_COUNT")
+#endif /* TARGETENV_REG_COUNT */
 
 
 #endif /* TARGET_ENV_H */
