@@ -1,5 +1,36 @@
 
-float64: 
+all common: 
+call: E8 rel32
+ret: C3
+push: 50 + reg
+pop: 58 + reg
+
+
+VEX encoding: 2-byte: 
+0xC5 0bRvvv_vLpp
+	R = 64/32 bit GPR (1/0)
+	v = ~register (1111 if unused)
+	L = 256/128 bit y/xmm (1/0)
+	pp = 	00 = None/replaces 0F prefix
+		01 = Replaces 66 prefix 
+		10 = Replaces F3 prefix
+		11 = Replaces F2 prefix
+avx common: 
+avx float64: 
+avx float32: 
+
+
+sse common: 
+movaps: 0F 28 /r MOVAPS xmm1, xmm2/m128 (reg-reg)
+movups: 
+xorps: 	0F 57 /r XORPS xmm1, xmm2/m128 			// for zeroing
+shufps: 0F C6 /r ib SHUFPS xmm1, xmm3/m128, imm8
+	xmm1.u32[0] = xmm3/m128.u32[imm8[0..1]]
+	xmm1.u32[1] = xmm3/m128.u32[imm8[2..3]]
+	xmm1.u32[2] = xmm1/m128.u32[imm8[4..5]] 	// NOTE: using xmm1 for this
+	xmm1.u32[3] = xmm1/m128.u32[imm8[6..7]]
+
+sse float64 (single): 
 addsd: 	F2 0F 58 /r ADDSD xmm1, xmm2/m64
 subsd: 	F2 0F 5C /r SUBSD xmm1, xmm2/m64
 mulsd: 	F2 0F 59 /r MULSD xmm1,xmm2/m64
@@ -7,8 +38,10 @@ divsd: 	F2 0F 5E /r DIVSD xmm1, xmm2/m64
 sqrtsd: F2 0F 51 /r SQRTSD xmm1,xmm2/m64
 movq:   F3 0F 7E /r MOVQ xmm1, xmm2/m64 (reg-mem)
         66 0F D6 /r MOVQ xmm2/m64, xmm1 (mem-reg)
+sse float32 (packed): 
+Replace F2 with 66
 
-float32: 
+sse float32 (single): 
 addss: 	F3 0F 58 /r ADDSS xmm1, xmm2/m32
 subss: 	F3 0F 5C /r SUBSS xmm1, xmm2/m32
 mulss: 	F3 0F 59 /r MULSS xmm1,xmm2/m32
@@ -16,11 +49,5 @@ divss: 	F3 0F 5E /r DIVSS xmm1, xmm2/m32
 sqrtss: F3 0F 51 /r SQRTSS xmm1, xmm2/m32
 movd: 	66 0F 6E /r MOVD xmm, r/m32	(reg-mem)
 	66 0F 7E /r MOVD r/m32, xmm	(mem-reg)
-
-common: 
-movaps: 0F 28 /r MOVAPS xmm1, xmm2/m128 (reg-reg)
-xorps: 	0F 57 /r XORPS xmm1, xmm2/m128 			// for zeroing
-call: E8 rel32
-ret: C3
-push: 50 + reg
-pop: 58 + reg
+sse float32 (packed): 
+Remove F3 byte
