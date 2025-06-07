@@ -3,8 +3,8 @@
 
 
 #include "JitCommon.h"
+#include "TargetEnv.h"
 
-#define TARGETENV_REG_COUNT 8
 
 typedef struct jit_emitter 
 {

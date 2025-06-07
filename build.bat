@@ -8,7 +8,7 @@ if "clean"=="%1" (
 
     if not exist bin\ mkdir bin
     pushd bin
-        cl /source-charset:utf-8 /Zi -I..\Include ^
+        cl /O2 /source-charset:utf-8 /Zi -I..\Include ^
             ..\x64_Windows_Build.c /FeGraph.exe gdi32.lib user32.lib^
             /link /subsystem:console /stack:0x1000000
     popd

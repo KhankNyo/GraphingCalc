@@ -1,7 +1,6 @@
 
 #include <stdarg.h>
 #include <stdio.h>
-#include "TargetEnv.h"
 #include "Emitter.h"
 
 #define RM(v) ((v) & 0x7)

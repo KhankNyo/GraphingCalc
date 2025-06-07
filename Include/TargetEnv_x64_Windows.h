@@ -3,33 +3,54 @@
 
 #include "Common.h"
 
-#ifdef _MSC_VER
+#define TARGETENV_REG_COUNT 8
+
+
+#if defined(_MSC_VER) && !defined(__clang__) /* clang is real funny */
+
+/* fuck MSVC */
+#   if (defined(_M_IX86_FP) && _M_IX86_FP == 0) /* MSVC not supporting/enabling SSE */
+#       error("Compiler must support SSE.")
+#   endif /* _M_IX86_FP, __SSE__ */
 
 #   include <intrin.h>
 
-static inline bool8 TargetEnv_x86_IsAVXSupported(void)
+static inline void TargetEnv_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
 {
-    int Features[4];
-    __cpuid(Features, 1);
-    return (Features[2] & (1 << 20)) != 0; /* AVX feature flag */
+    int Bitfield[4];
+    __cpuid(Bitfield, Feature);
+    *OutEAX = Bitfield[0];
+    *OutEBX = Bitfield[1];
+    *OutECX = Bitfield[2];
+    *OutEDX = Bitfield[3];
 }
 
 #else /* non-msvc compiler targeting windows */
 
+#   if !defined(__SSE__)
+#       error("Compiler must support SSE.")
+#   endif /* __SSE__ */
+
 #   include <cpuid.h>
 
-static inline bool8 TargetEnv_x86_IsAVXSupported(void)
+static inline void TargetEnv_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
 {
-    unsigned int EAX = 0, 
-                 EBX = 0, 
-                 ECX = 0, 
-                 EDX = 0;
-    __get_cpuid(1, &EAX, &EBX, &ECX, &EDX);
-    return (ECX & (1 << 20)) != 0; /* AVX feature flag */
+    __get_cpuid(Feature, OutEAX, OutEBX, OutECX, OutEDX);
 }
+
 
 #endif /* _MSC_VER */
 
+
+static inline bool8 TargetEnv_x64_IsAVXSupported(void)
+{
+    u32 EAX, 
+        EBX, 
+        ECX = 0, 
+        EDX;
+    TargetEnv_x64_GetCPUID(1, &EAX, &EBX, &ECX, &EDX);
+    return (ECX & (1 << 20)) != 0;
+}
 
 /* ms x64 calling conv */
 static inline int TargetEnv_GetShadowSpaceSize(void)
