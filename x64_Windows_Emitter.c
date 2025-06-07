@@ -1,7 +1,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
-#include "Emitter.h"
+#include "TargetEnv.h"
 
 #define RM(v) ((v) & 0x7)
 #define REG(v) (((v) & 0x7) << 3)
@@ -85,12 +85,12 @@ static const u8 sLoadSingle64[] = {
 
 static int Emit(jit_emitter *Emitter, int Count, ...)
 {
-    int InstructionOffset = Emitter->BufferSize;
+    int InstructionOffset = Emitter->Base.BufferSize;
     va_list Args;
     va_start(Args, Count);
-    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
+    for (int i = 0; i < Count && (uint)Emitter->Base.BufferSize < Emitter->Base.BufferCapacity; i++)
     {
-        Emitter->Buffer[Emitter->BufferSize++] = va_arg(Args, uint);
+        Emitter->Base.Buffer[Emitter->Base.BufferSize++] = va_arg(Args, uint);
     }
     va_end(Args);
     return InstructionOffset;
@@ -98,10 +98,10 @@ static int Emit(jit_emitter *Emitter, int Count, ...)
 
 static int EmitArray(jit_emitter *Emitter, const u8 Array[], int Count)
 {
-    int InstructionOffset = Emitter->BufferSize;
-    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
+    int InstructionOffset = Emitter->Base.BufferSize;
+    for (int i = 0; i < Count && (uint)Emitter->Base.BufferSize < Emitter->Base.BufferCapacity; i++)
     {
-        Emitter->Buffer[Emitter->BufferSize++] = Array[i];
+        Emitter->Base.Buffer[Emitter->Base.BufferSize++] = Array[i];
     }
     return InstructionOffset;
 }
@@ -155,13 +155,15 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 
 
 
-jit_emitter Emitter_Init(u8 *Buffer, uint BufferCapacity)
+void Emitter_Init(jit_emitter *Emitter, u8 *Buffer, uint BufferCapacity)
 {
-    jit_emitter Emitter = { 
-        .Buffer = Buffer,
-        .BufferCapacity = BufferCapacity,
+    ASSERT(NULL != Emitter, "nullptr");
+    *Emitter = (jit_emitter) {
+        .Base = {
+            .Buffer = Buffer, 
+            .BufferCapacity = BufferCapacity,
+        },
     };
-    return Emitter;
 }
 
 void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
@@ -171,7 +173,7 @@ void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
     STATIC_ASSERT(sizeof sLoadSingle32 == sizeof Emitter->LoadSingle, "unreachable");
     STATIC_ASSERT(sizeof sLoadSingle64 == sizeof Emitter->LoadSingle, "unreachable");
 
-    Emitter->BufferSize = 0;
+    Emitter->Base.BufferSize = 0;
     if (EmitFloat32Instructions)
     {
         Emitter->FloatOpcode = 0xF3;
@@ -215,18 +217,18 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
         sizeof Emitter->StoreSingle
     );
     Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
-    uint InstructionLength = Emitter->BufferSize - PrevSize;
+    uint InstructionLength = Emitter->Base.BufferSize - PrevSize;
 
     /* compared the emitted instruction with the last*/
-    u8 *PrevIns = Emitter->Buffer + PrevSize - InstructionLength;
-    u8 *CurrIns = Emitter->Buffer + PrevSize;
-    if (Emitter->BufferSize >= 2*InstructionLength
+    u8 *PrevIns = Emitter->Base.Buffer + PrevSize - InstructionLength;
+    u8 *CurrIns = Emitter->Base.Buffer + PrevSize;
+    if (Emitter->Base.BufferSize >= 2*InstructionLength
     && MemEqu(PrevIns, CurrIns, InstructionLength))
     {
         /* if matched, 
          * this current instruction was trying to read the value we just stored into the same regsiter, 
          * optimize it out */
-        Emitter->BufferSize -= InstructionLength;
+        Emitter->Base.BufferSize -= InstructionLength;
     }
     else
     {
@@ -297,7 +299,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
      * movsd [rbp + i*8 + 0x18], xmm(i) 
      * ...
      * */
-    while (Emitter->BufferSize % 0x10 != 0)
+    while (Emitter->Base.BufferSize % 0x10 != 0)
     {
         Emit(Emitter, 1, 0x90); /* nop */
     }
@@ -333,8 +335,8 @@ void Emit_FunctionExit(jit_emitter *Emitter)
 
 void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
 {
-    ASSERT(FunctionLocation + sizeof(sPrologue) <= Emitter->BufferCapacity, "bad function location");
-    u8 *Location = Emitter->Buffer 
+    ASSERT(FunctionLocation + sizeof(sPrologue) <= Emitter->Base.BufferCapacity, "bad function location");
+    u8 *Location = Emitter->Base.Buffer 
         + FunctionLocation 
         + sizeof(sPrologue) - 4;
     MemCpy(Location, &Value, 4);
@@ -343,7 +345,7 @@ void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
     /* call rel32 */
-    i32 Rel32 = FunctionLocation - (Emitter->BufferSize + 5);
+    i32 Rel32 = FunctionLocation - (Emitter->Base.BufferSize + 5);
     Emit(Emitter, 1, 0xE8);
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
 }
@@ -359,9 +361,9 @@ int Emit_Jump(jit_emitter *Emitter)
 
 void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst)
 {
-    ASSERT(JumpInsLocation < Emitter->BufferCapacity, "patch jump instruction location");
+    ASSERT(JumpInsLocation < Emitter->Base.BufferCapacity, "patch jump instruction location");
     i32 Rel32 = (i64)Dst - (i64)(JumpInsLocation + 5);
-    MemCpy(Emitter->Buffer + JumpInsLocation + 1, &Rel32, sizeof Rel32);
+    MemCpy(Emitter->Base.Buffer + JumpInsLocation + 1, &Rel32, sizeof Rel32);
 }
 
 

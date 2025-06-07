@@ -2,8 +2,8 @@
 #define JIT_STORAGE_H
 
 
-#include "JitCommon.h"
-#include "Emitter.h"
+#include "TargetEnv.h"
+
 
 typedef struct jit_storage_manager
 {

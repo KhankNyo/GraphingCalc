@@ -3,7 +3,6 @@
 
 #include "JitCommon.h"
 #include "JitError.h"
-#include "Emitter.h"
 #include "DefTable.h"
 #include "Storage.h"
 

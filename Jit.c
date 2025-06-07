@@ -1,7 +1,6 @@
 #include "TargetEnv.h"
 #include "Jit.h"
 #include "DefTable.h"
-#include "Emitter.h"
 
 #include <string.h> /* memset */
 #include <stdio.h>
@@ -686,6 +685,17 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
 
 
 
+static u8 *Jit_GetEmitterBuffer(jit *Jit)
+{
+    return Jit->Emitter.Base.Buffer;
+}
+
+static u8 Jit_GetEmitterBufferSize(const jit *Jit)
+{
+    return Jit->Emitter.Base.BufferSize;
+}
+
+
 static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
 {
     Function->ParamStart = Jit->LocalVarCount;
@@ -724,7 +734,7 @@ static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
 {
     def_table_entry *Label = DefTable_Define(&Jit->Global, Name, NameLen, TYPE_FUNCTION);
     jit_function *Function = &Label->As.Function;
-    Function->Dbg.Location = Jit->Emitter.BufferSize;
+    Function->Dbg.Location = Jit_GetEmitterBufferSize(Jit);
     return Function;
 }
 
@@ -779,7 +789,7 @@ static void FunctionDecl(jit *Jit, jit_token FnName)
 
         /* emit function exit code */
         Emit_FunctionExit(&Jit->Emitter);
-        Function->Dbg.ByteCount = Jit->Emitter.BufferSize - Function->Dbg.Location;
+        Function->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit) - Function->Dbg.Location;
         Emit_PatchStackSize(&Jit->Emitter, Function->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
     }
     Jit_FunctionEndScope(Jit);
@@ -802,8 +812,8 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '='.");
 
     /* parse expr */
-    Definition->As.Common.Location = Jit->Emitter.BufferSize;
-    uint JumpDst = Jit->Emitter.BufferSize;
+    Definition->As.Common.Location = Jit_GetEmitterBufferSize(Jit);
+    uint JumpDst = Jit_GetEmitterBufferSize(Jit);
     if (Jit_ParseExpr(Jit, PREC_EXPR))
     {
         Definition->As.Variable.Expr = *Expr_Pop(Jit);
@@ -905,11 +915,11 @@ static void Jit_Disassemble(jit *Jit)
         jit_debug_info Dbg = i->As.Common;
 
         printf("\n<%08x>: (%s) %.*s\n", Dbg.Location, Type[i->Type], Dbg.Str.Len, Dbg.Str.Ptr);
-        Jit_DisassembleCode(Jit->Emitter.Buffer, Dbg.Location, Dbg.Location + Dbg.ByteCount, BytesPerLine);
+        Jit_DisassembleCode(Jit_GetEmitterBuffer(Jit), Dbg.Location, Dbg.Location + Dbg.ByteCount, BytesPerLine);
         i = i->Next;
     }
 #else
-    Jit_DisassembleCode(Jit->Emitter.Buffer, 0, Jit->Emitter.BufferSize, BytesPerLine);
+    Jit_DisassembleCode(Jit_GetEmitterBuffer(Jit), 0, Jit_GetEmitterBufferSize(Jit), BytesPerLine);
 #endif
 
     printf("Consts: \n");
@@ -949,7 +959,6 @@ uint Jit_Init(
 
     *Jit = (jit) {
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
-        .Emitter = Emitter_Init(ProgramMemory, ProgramMemCapacity),
         .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
 
         .ExprStack = ExprStack,
@@ -957,6 +966,7 @@ uint Jit_Init(
         .LocalVars = Locals,
         .LocalVarCapacity = LocalCapacity,
     };
+    Emitter_Init(&Jit->Emitter, ProgramMemory, ProgramMemCapacity);
     return 0;
 }
 
@@ -994,10 +1004,10 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
             {}
         } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
     }
-    Jit_PatchJump(Jit, Jit->Emitter.BufferSize);
+    Jit_PatchJump(Jit, Jit_GetEmitterBufferSize(Jit));
     Emit_FunctionExit(&Jit->Emitter);
     Emit_PatchStackSize(&Jit->Emitter, Init->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
-    Init->Dbg.ByteCount = Jit->Emitter.BufferSize;
+    Init->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit);
 
     if (!Jit->Error.Available)
     {
@@ -1029,9 +1039,9 @@ jit_init64 Jit_GetInit64(jit *Jit, const jit_result *Result)
 
 void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn)
 {
-    ASSERT(Fn->Dbg.Location < Jit->Emitter.BufferSize, "Function with invalid location");
-    ASSERT(Fn->Dbg.Location + Fn->Dbg.ByteCount <= Jit->Emitter.BufferSize, "Function with invalid size");
-    u8 *FnPtr = Jit->Emitter.Buffer + Fn->Dbg.Location;
+    ASSERT(Fn->Dbg.Location < Jit_GetEmitterBufferSize(Jit), "Function with invalid location");
+    ASSERT(Fn->Dbg.Location + Fn->Dbg.ByteCount <= Jit_GetEmitterBufferSize(Jit), "Function with invalid size");
+    u8 *FnPtr = Jit_GetEmitterBuffer(Jit) + Fn->Dbg.Location;
     return FnPtr;
 }
 

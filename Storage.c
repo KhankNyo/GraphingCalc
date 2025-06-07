@@ -1,6 +1,5 @@
 
 #include <string.h> /* memset */
-#include "Emitter.h"
 #include "Storage.h"
 
 
