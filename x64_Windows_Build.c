@@ -10,7 +10,8 @@
 #include "JitError.c"
 #include "DefTable.c"
 #include "Jit.c"
-#include "Emitter.c"
+#include "x64_Windows_Emitter.c"
 #include "Storage.c"
 #include "Graph.c"
 #include "Win32.c"
+

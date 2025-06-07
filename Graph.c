@@ -1,7 +1,6 @@
 
 #include <string.h> /* memset */
 #include <stdio.h>
-#include <x86intrin.h>
 
 #include "Common.h"
 #include "Include/Platform.h"

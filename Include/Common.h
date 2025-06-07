@@ -4,7 +4,12 @@
 #include <stdint.h>
 #include <assert.h>
 
-#define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
+#ifdef _MSC_VER
+#  define STATIC_ASSERT(x, msg) static_assert(x, msg)
+#else
+#  define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
+#endif /* _MSC_VER */
+
 #define ASSERT(x, msg) assert((x) && (msg))
 #define TODO(msg) assert(false && "TODO: "msg)
 #define UNREACHABLE() do {\

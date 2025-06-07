@@ -21,20 +21,6 @@ typedef struct jit_emitter
 
 uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64]);
 
-
-int TargetEnv_AlignStackSize(int StackSize);
-int TargetEnv_GetShadowSpaceSize(void);
-int TargetEnv_GetGlobalPtrReg(void);
-int TargetEnv_GetStackFrameReg(void);
-int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
-int TargetEnv_GetArgRegCount(void);
-int TargetEnv_GetArgBaseReg(void);
-int TargetEnv_GetArgReg(int ArgIndex);
-int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
-int TargetEnv_GetReturnReg(void);
-
-
-
 jit_emitter Emitter_Init(u8 *Buffer, uint BufferCapacity);
 void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions);
 
