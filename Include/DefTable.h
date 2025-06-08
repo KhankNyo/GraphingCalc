@@ -24,7 +24,6 @@ struct def_table_entry
         jit_function Function;
         jit_variable Variable;
     } As;
-    def_table_entry *Next, *Prev;
 };
 
 struct def_table 
@@ -32,8 +31,6 @@ struct def_table
     def_table_hash_fn HashFn;
     def_table_entry *Array;
     uint Count, Capacity; 
-
-    def_table_entry *Head, *Tail;
 };
 
 
