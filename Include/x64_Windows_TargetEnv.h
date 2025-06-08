@@ -102,6 +102,10 @@ static inline int TargetEnv_GetArgReg(int ArgIndex)
     ASSERT(ArgIndex < 4, "bad arg index");
     return ArgIndex + 1;
 }
+static inline bool8 TargetEnv_CallerShouldSave(int Reg)
+{
+    return IN_RANGE(0, Reg, TARGETENV_REG_COUNT);
+}
 static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize)
 {
     ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");

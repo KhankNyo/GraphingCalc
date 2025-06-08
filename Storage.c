@@ -72,11 +72,12 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
 {
     storage_spill_data Spill = { 0 };
 
+    /* spill call-clobbered registers */
     for (uint i = 0; i < TARGETENV_REG_COUNT && CURR_SCOPE(S->BusyRegCount); i++)
     {
-        if (CURR_SCOPE(S->RegIsBusy)[i])
+        if (CURR_SCOPE(S->RegIsBusy)[i] && TargetEnv_CallerShouldSave(i))
         {
-            int RegToSpill = TargetEnv_GetArgReg(i);
+            int RegToSpill = i;
             i32 StackOffset = Storage_PushStack(S, S->DataSize);
 
             /* spill it to stack memory */

@@ -33,31 +33,29 @@ typedef enum jit_ir_op_type
     IR_OP_NEG,
     IR_OP_LOAD,
     IR_OP_CALL,
+    IR_OP_SWAP,
 } jit_ir_op_type;
 typedef enum jit_ir_data_type 
 {
+    IR_DATA_VARREF,
     IR_DATA_CONST,
-    IR_DATA_REF,
 } jit_ir_data_type;
 typedef struct jit_ir_data 
 {
     jit_ir_data_type Type;
     union {
         double Const;
-        jit_token Ref;
+        strview VarRef;
     } As;
 } jit_ir_data;
 typedef struct jit_ir_op
 {
     jit_ir_op_type Type;
     union {
-        int IrDataIndex;
+        int LoadIndex; 
         int ArgCount;
-        struct {
-            int ArgCount;
-            jit_token FnName;
-        } AsCall;
     };
+    strview FnName;
 } jit_ir_op;
 
 typedef struct jit 
@@ -84,8 +82,6 @@ typedef struct jit
     uint IrOpCount, IrOpCapacity;
     jit_ir_data IrData[256];
     uint IrDataCount, IrDataCapacity;
-    jit_ir_data IrStack[256];
-    uint IrStackSize, IrStackCapacity;
 #endif
 
     int VarDeclEnd;

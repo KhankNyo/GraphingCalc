@@ -14,7 +14,6 @@ typedef enum jit_storage_type
 {
     STORAGE_MEM = 0,
     STORAGE_REG,
-    STORAGE_CONST,
 } jit_storage_type;
 
 typedef enum jit_token_type 
@@ -45,7 +44,6 @@ struct jit_expression
 {
     jit_storage_type Storage;
     union {
-        double Const;
         struct {
             i32 Offset;
             uint BaseReg;

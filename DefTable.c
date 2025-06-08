@@ -22,7 +22,7 @@ static u32 NextIndex(const def_table *Table, u32 i)
 
 def_table DefTable_Init(def_table_entry *Array, uint Capacity, def_table_hash_fn HashFn)
 {
-    assert(Capacity % 2 == 0 && "bad capacity (should be pow of 2)");
+    ASSERT(Capacity % 2 == 0, "bad capacity (should be pow of 2)");
     return (def_table) { 
         .Array = Array,
         .Capacity = Capacity,
@@ -69,7 +69,7 @@ def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, 
 
             if (!Table->Tail)
             {
-                assert(!Table->Head && "bad linked list");
+                ASSERT(!Table->Head, "bad linked list");
                 Table->Head = Entry;
                 Table->Tail = Entry;
             }

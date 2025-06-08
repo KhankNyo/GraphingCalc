@@ -14,6 +14,7 @@ static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
 static inline int TargetEnv_GetArgRegCount(void);
 static inline int TargetEnv_GetArgBaseReg(void);
 static inline int TargetEnv_GetArgReg(int ArgIndex);
+static inline bool8 TargetEnv_CallerShouldSave(int Reg);
 static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
 static inline int TargetEnv_GetReturnReg(void);
 
