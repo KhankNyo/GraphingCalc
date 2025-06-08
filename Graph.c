@@ -459,7 +459,7 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "f(x) = 1/x\n"
+        "f(x) = m*2 + m*f(4) + g(m)\n"
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)

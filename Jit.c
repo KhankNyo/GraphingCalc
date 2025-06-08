@@ -18,7 +18,11 @@ typedef enum precedence
     PREC_UNARY,
 } precedence;
 
+#if 0
 static bool8 Jit_ParseExpr(jit *Jit, precedence Prec);
+#else
+static void Jit_ParseExpr(jit *Jit, precedence Prec);
+#endif
 
 
 static bool8 ChInRange(char Lower, char n, char Upper)
@@ -260,8 +264,11 @@ static void Jit_Reset(jit *Jit, const char *Expr, jit_compilation_flags Flags)
     Jit->Offset = 1;
     Jit->LocalVarCount = 0;
     Jit->LocalVarBase = 0;
-    Jit->ExprStackSize = 0;
     Jit->VarDeclEnd = -1;
+#if 0
+    Jit->ExprStackSize = 0;
+#else
+#endif
     ConsumeToken(Jit);
 
     Error_Reset(&Jit->Error);
@@ -275,6 +282,7 @@ static void Jit_Reset(jit *Jit, const char *Expr, jit_compilation_flags Flags)
 
 
 
+#if 0
 
 static jit_variable *Jit_FindVariable(jit *Jit, const jit_token *VarName)
 {
@@ -641,7 +649,7 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
     while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
     {
         jit_token_type Oper = ConsumeToken(Jit).Type;
-        Error = Error || !Jit_ParseExpr(Jit, Oper + 1);
+        Error = Error || !Jit_ParseExpr(Jit, PrecedenceOf(Oper) + 1);
         if (Error)
             continue;
 
@@ -680,6 +688,156 @@ static bool8 Jit_ParseExpr(jit *Jit, precedence Prec)
 
     }
     return !Error && !Jit->Error.Available;
+}
+
+#endif
+
+
+static jit_ir_op *Ir_PushOp(jit *Jit, jit_ir_op_type Type, int ArgCount)
+{
+    ASSERT(Jit->IrOpCount < Jit->IrOpCapacity, "size");
+
+    jit_ir_op *Op = &Jit->IrOp[Jit->IrOpCount++];
+    Op->Type = Type;
+    Op->ArgCount = ArgCount;
+    return Op;
+}
+static void Ir_PushBinaryOp(jit *Jit, jit_ir_op_type Type)
+{
+    Ir_PushOp(Jit, Type, 2);
+}
+
+static int Ir_PushData(jit *Jit, jit_ir_data Data)
+{
+    ASSERT(Jit->IrDataCount < Jit->IrDataCapacity, "size");
+
+    int Index = Jit->IrDataCount++;
+    Jit->IrData[Index] = Data;
+    return Index;
+}
+
+static void Expr_Call(jit *Jit, const jit_token *FnName)
+{
+    /* consumed '(' */
+    /* parse args */
+    int ArgCount = 0;
+    if (TOK_RPAREN != NextToken(Jit).Type)
+    {
+        do {
+            Jit_ParseExpr(Jit, PREC_EXPR);
+            ArgCount++;
+        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+    }
+    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument list.");
+
+    jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_CALL, ArgCount);
+    Op->AsCall.ArgCount = ArgCount;
+    Op->AsCall.FnName = *FnName;
+}
+
+static void Expr_Variable(jit *Jit, const jit_token *VarName)
+{
+    /* consumed VarName */
+    jit_ir_data Data = {
+        .Type = IR_DATA_REF,
+        .As.Ref = *VarName,
+    };
+    int Index = Ir_PushData(Jit, Data);
+    jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_LOAD, 0);
+    Op->IrDataIndex = Index;
+}
+
+
+
+static bool8 Jit_ParseUnary(jit *Jit)
+{
+    jit_token Left = ConsumeToken(Jit);
+    switch (Left.Type)
+    {
+    case TOK_PLUS:
+    {
+        return Jit_ParseUnary(Jit);
+    }
+    case TOK_MINUS:
+    {
+        if (!Jit_ParseUnary(Jit))
+            return !Jit->Error.Available;
+
+        Ir_PushOp(Jit, IR_OP_NEG, 1);
+    } break; 
+    case TOK_NUMBER:
+    {
+        jit_ir_data Data = {
+            .Type = IR_DATA_CONST,
+            .As.Const = Left.As.Number,
+        };
+        int IrDataIndex = Ir_PushData(Jit, Data);
+        jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_LOAD, 0);
+        Op->IrDataIndex = IrDataIndex;
+    } break;
+    case TOK_LPAREN:
+    {
+        Jit_ParseExpr(Jit, PREC_EXPR);
+        ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
+    } break;
+    case TOK_IDENTIFIER:
+    {
+        /* function call */
+        if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
+        {
+            Expr_Call(Jit, &Left);
+        }
+        /* variable reference */
+        else
+        {
+            Expr_Variable(Jit, &Left);
+        }
+    } break;
+    default:
+    {
+        Error_AtToken(&Jit->Error, &Left, "Expected an expression.");
+    } break;
+    }
+
+    return !Jit->Error.Available;
+}
+
+static precedence PrecedenceOf(jit_token_type Operator)
+{
+    switch (Operator)
+    {
+    case TOK_PLUS:
+    case TOK_MINUS:
+        return PREC_PLUSMINUS;
+    case TOK_STAR:
+    case TOK_SLASH:
+        return PREC_MULDIV;
+    case TOK_CARET:
+        return PREC_POW;
+    default: return PREC_NONE;
+    }
+}
+
+static void Jit_ParseExpr(jit *Jit, precedence Prec)
+{
+    Jit_ParseUnary(Jit);
+    while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
+    {
+        jit_token_type Oper = ConsumeToken(Jit).Type;
+        Jit_ParseExpr(Jit, PrecedenceOf(Oper) + 1);
+
+        switch (Oper)
+        {
+        case TOK_PLUS:  Ir_PushBinaryOp(Jit, IR_OP_ADD); break;
+        case TOK_MINUS: Ir_PushBinaryOp(Jit, IR_OP_SUB); break;
+        case TOK_STAR:  Ir_PushBinaryOp(Jit, IR_OP_MUL); break;
+        case TOK_SLASH: Ir_PushBinaryOp(Jit, IR_OP_DIV); break;
+        default:
+        {
+            UNREACHABLE();
+        } break;
+        }
+    }
 }
 
 
@@ -739,6 +897,7 @@ static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
 }
 
 
+#if 0
 static void FunctionDecl(jit *Jit, jit_token FnName)
 {
     /* consumed '(' */
@@ -854,6 +1013,98 @@ static void VariableDecl(jit *Jit, jit_token Identifier)
         }
     }
 }
+#else
+static void FunctionDecl(jit *Jit, jit_token FnName)
+{
+    /* consumed '(' */
+    jit_function *Function = DefineFunction(Jit, FnName.Str.Ptr, FnName.Str.Len);
+    Jit_FunctionBeginScope(Jit, Function);
+
+    if (TOK_RPAREN != NextToken(Jit).Type)
+    {
+        do {
+            ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
+            jit_token Parameter = CurrToken(Jit); 
+            Jit_FunctionPushLocal(Jit, Function, &Parameter);
+        } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
+    }
+    ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
+
+    ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after function declaration.");
+
+    Jit->IrDataCount = 0;
+    Jit->IrDataCapacity = sizeof(Jit->IrData);
+    Jit->IrStackSize = 0;
+    Jit->IrStackCapacity = sizeof(Jit->IrStack);
+    Jit->IrOpCount = 0;
+    Jit->IrOpCapacity = sizeof(Jit->IrOp);
+    Jit_ParseExpr(Jit, PREC_EXPR);
+    printf("=============IR DATA=============\n");
+    for (uint i = 0; i < Jit->IrDataCount; i++)
+    {
+        jit_ir_data *Data = Jit->IrData + i;
+        printf("Data[%d]: ", i);
+        switch (Data->Type)
+        {
+        case IR_DATA_CONST:
+        {
+            printf("CONST, %f\n", Data->As.Const);
+        } break;
+        case IR_DATA_REF:
+        {
+            printf("REF, '%.*s'\n", Data->As.Ref.Str.Len, Data->As.Ref.Str.Ptr);
+        } break;
+        }
+    }
+    printf("\n=============IR CODE=============\n");
+    u8 StackPtr = 0;
+    double TmpStack[256];
+#define PSH(v) (TmpStack[StackPtr++] = v)
+#define POP() TmpStack[--StackPtr]
+    for (uint i = 0; i < Jit->IrOpCount; i++)
+    {
+        jit_ir_op *Op = Jit->IrOp + i;
+        switch (Op->Type)
+        {
+        case IR_OP_ADD:
+        {
+            printf("add\n");
+        } break;
+        case IR_OP_SUB:
+        {
+            printf("sub\n");
+        } break;
+        case IR_OP_MUL:
+        {
+            printf("mul\n");
+        } break;
+        case IR_OP_DIV:
+        {
+            printf("div\n");
+        } break;
+        case IR_OP_NEG:
+        {
+            printf("neg\n");
+        } break;
+        case IR_OP_LOAD:
+        {
+            int Index = Op->IrDataIndex;
+            printf("load %d\n", Index);
+        } break;
+        case IR_OP_CALL:
+        {
+            printf("call '%.*s', %d\n", Op->AsCall.FnName.Str.Len, Op->AsCall.FnName.Str.Ptr, Op->AsCall.ArgCount);
+        } break;
+        }
+    }
+    exit(0);
+
+    Jit_FunctionEndScope(Jit);
+}
+static void VariableDecl(jit *Jit, jit_token VarName)
+{
+}
+#endif 
 
 
 static void Jit_DisassembleCode(u8 *Buffer, uint Start, uint End, uint BytesPerLine)
@@ -961,8 +1212,11 @@ uint Jit_Init(
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
         .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
 
+#if 0
         .ExprStack = ExprStack,
         .ExprStackCapacity = ExprStackCapacity,
+#else
+#endif
         .LocalVars = Locals,
         .LocalVarCapacity = LocalCapacity,
     };
@@ -1004,7 +1258,9 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
             {}
         } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
     }
+#if 0
     Jit_PatchJump(Jit, Jit_GetEmitterBufferSize(Jit));
+#endif
     Emit_FunctionExit(&Jit->Emitter);
     Emit_PatchStackSize(&Jit->Emitter, Init->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
     Init->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit);

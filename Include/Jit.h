@@ -5,6 +5,7 @@
 #include "JitError.h"
 #include "DefTable.h"
 #include "Storage.h"
+#include <wchar.h>
 
 
 typedef enum jit_compilation_flags 
@@ -23,6 +24,42 @@ typedef struct jit_result
     def_table_entry *GlobalSymbol;
 } jit_result;
 
+typedef enum jit_ir_op_type 
+{
+    IR_OP_ADD,
+    IR_OP_SUB,
+    IR_OP_MUL,
+    IR_OP_DIV,
+    IR_OP_NEG,
+    IR_OP_LOAD,
+    IR_OP_CALL,
+} jit_ir_op_type;
+typedef enum jit_ir_data_type 
+{
+    IR_DATA_CONST,
+    IR_DATA_REF,
+} jit_ir_data_type;
+typedef struct jit_ir_data 
+{
+    jit_ir_data_type Type;
+    union {
+        double Const;
+        jit_token Ref;
+    } As;
+} jit_ir_data;
+typedef struct jit_ir_op
+{
+    jit_ir_op_type Type;
+    union {
+        int IrDataIndex;
+        int ArgCount;
+        struct {
+            int ArgCount;
+            jit_token FnName;
+        } AsCall;
+    };
+} jit_ir_op;
+
 typedef struct jit 
 {
     jit_compilation_flags Flags;
@@ -39,8 +76,17 @@ typedef struct jit
 
     struct jit_token Curr, Next;
 
+#if 0
     jit_expression *ExprStack;
     int ExprStackSize, ExprStackCapacity;
+#else
+    jit_ir_op IrOp[256];
+    uint IrOpCount, IrOpCapacity;
+    jit_ir_data IrData[256];
+    uint IrDataCount, IrDataCapacity;
+    jit_ir_data IrStack[256];
+    uint IrStackSize, IrStackCapacity;
+#endif
 
     int VarDeclEnd;
     jit_emitter Emitter;
