@@ -94,7 +94,7 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
 
 void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
 {
-    for (uint i = 0; i < Spill->Count; i++)
+    for (int i = 0; i < Spill->Count; i++)
     {
         Storage_ForceAllocateReg(S, Spill->Reg[i]);
     }

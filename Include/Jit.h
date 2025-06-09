@@ -24,6 +24,8 @@ typedef struct jit_result
     def_table_entry *GlobalSymbol;
 } jit_result;
 
+typedef struct jit_ir_compiler jit_ir_compiler;
+
 typedef struct jit 
 {
     jit_compilation_flags Flags;
@@ -31,29 +33,23 @@ typedef struct jit
     const char *Start, *End;
     int Line;
     int Offset;
-    uint SafePeekDist;
+    int SafePeekDist;
 
-    bool8 InLocalScope;
-    int TmpParamCount, TmpParamCapacity;
-    jit_variable *TmpParam;
     def_table Global;
     jit_token Curr, Next;
 
     jit_ir_op *IrOp;
-    uint IrOpCount, IrOpCapacity;
+    int IrOpCount;
     jit_ir_data *IrData;
-    uint IrDataCount, IrDataCapacity;
-    jit_expression *IrStack;
-    uint IrStackCount, IrStackCapacity;
+    int IrDataCount;
 
-    int VarDeclEnd;
     jit_emitter Emitter;
     jit_storage_manager Storage;
     jit_error Error;
 
     u8 *ScratchpadPtr;
-    uint ScratchpadSize, ScratchpadCapacity;
-    bool8 IsScratchpadReserved;
+    int ScratchpadLeftByteCount, ScratchpadRightByteCount; 
+    int ScratchpadCapacity;
 } jit;
 
 /* returns 0 on success, otherwise returns minimum scratch pad memory size */

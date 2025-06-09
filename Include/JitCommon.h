@@ -42,23 +42,26 @@ typedef enum jit_token_type
     TOK_EOF,
 } jit_token_type;
 
+typedef i8 jit_reg;
+typedef struct jit_mem 
+{
+    i32 Offset;
+    jit_reg BaseReg;
+} jit_mem;
 struct jit_expression
 {
     jit_storage_type Storage;
     union {
-        struct {
-            i32 Offset;
-            uint BaseReg;
-        } Mem;
-        int Reg;
+        jit_mem Mem;
+        jit_reg Reg;
     } As;
 };
 
 struct jit_debug_info 
 {
     strview Str;
-    uint Location;
-    uint ByteCount;
+    int Location;
+    int ByteCount;
 };
 
 struct jit_variable
@@ -72,7 +75,6 @@ struct jit_function
     jit_debug_info Dbg;
     int ParamStart;
     int ParamCount;
-    int ReturnReg;
 };
 
 struct jit_token 

@@ -289,21 +289,21 @@ void Emit_LoadZero(jit_emitter *Emitter, int DstReg)
 
 
 
-uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCount)
+uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize)
 {
     /* push rbp 
      * mov rbp, rsp
      * sub rsp, memsize
-     * ; x64 windows: using shadow space of 32 bytes below return addr as argument storage
-     * ; arg[i] = [rbp + 0x18 + i*8]
-     * movsd [rbp + i*8 + 0x18], xmm(i) 
      * ...
      * */
     while (Emitter->Base.BufferSize % 0x10 != 0)
     {
         Emit(Emitter, 1, 0x90); /* nop */
     }
-    uint FunctionLocation = EmitArray(Emitter, sPrologue, sizeof sPrologue);
+    uint Location = EmitArray(Emitter, sPrologue, sizeof sPrologue - 4);
+    EmitArray(Emitter, (u8 *)&StackSize, 4);
+    return Location;
+#if 0
     for (int i = 0; i < ParamCount; i++)
     {
         /* 0x10 = rbp and retaddr, 
@@ -314,7 +314,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
             Emit_Store(Emitter, TargetEnv_GetArgReg(i), RBP, Displacement);
         }
 
-        Params[i].Expr = (jit_expression) {
+        Params[i] = (jit_expression) {
             .Storage = STORAGE_MEM,
             .As.Mem = {
                 .Offset = Displacement,
@@ -322,7 +322,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCou
             },
         };
     }
-    return FunctionLocation;
+#endif
 }
 
 void Emit_FunctionExit(jit_emitter *Emitter)

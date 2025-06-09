@@ -22,7 +22,7 @@ typedef struct jit_storage_manager
 
 typedef struct storage_spill_data 
 {
-    uint Count;
+    int Count;
     u8 Reg[TARGETENV_REG_COUNT];
     i32 StackOffset[TARGETENV_REG_COUNT];
 } storage_spill_data;

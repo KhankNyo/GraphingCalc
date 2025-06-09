@@ -73,7 +73,7 @@ static inline int TargetEnv_GetGlobalPtrReg(void)
 /* base pointer */
 static inline int TargetEnv_GetStackFrameReg(void)
 {
-    return 3; /* RBP */
+    return 5; /* RBP */
 }
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize)
 {
@@ -101,6 +101,14 @@ static inline int TargetEnv_GetArgReg(int ArgIndex)
 {
     ASSERT(ArgIndex < 4, "bad arg index");
     return ArgIndex + 1;
+}
+static inline int TargetEnv_GetParamBaseReg(void)
+{
+    return 5; /* RBP */
+}
+static inline i32 TargetEnv_GetParamDisplacement(int ArgIndex, int DataSize)
+{
+    return 0x18 + ArgIndex*DataSize; /* 0x10 = rbp, retaddr, 0x8 = rcx (global ptr) */
 }
 static inline bool8 TargetEnv_CallerShouldSave(int Reg)
 {

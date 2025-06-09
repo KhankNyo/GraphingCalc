@@ -14,6 +14,7 @@ static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
 static inline int TargetEnv_GetArgRegCount(void);
 static inline int TargetEnv_GetArgBaseReg(void);
 static inline int TargetEnv_GetArgReg(int ArgIndex);
+static inline int TargetEnv_GetParamBaseReg(void);
 static inline bool8 TargetEnv_CallerShouldSave(int Reg);
 static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
 static inline int TargetEnv_GetReturnReg(void);
@@ -54,7 +55,7 @@ void Emit_DivReg(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
 
 /* returns the function's location */
-uint Emit_FunctionEntry(jit_emitter *Emitter, jit_variable *Params, int ParamCount);
+uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize);
 void Emit_FunctionExit(jit_emitter *Emitter);
 void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value);
 

@@ -412,11 +412,9 @@ graph_state Graph_OnEntry(void)
     Platform_SetScreenBufferDimensions(ScrWidth, ScrHeight);
     Platform_SetFrameTimeTarget(0);
 
-    uint ScratchpadCapacity = 128 * 1024;
     uint ProgramMemCapacity = 32*1024;
     uint GlobalMemCapacity = 2*1024;
     uint DefTableCapacity = 4*1024;
-    void *Scratchpad = Platform_AllocateMemory(ScratchpadCapacity);
     void *ProgramMemory = Platform_AllocateMemory(ProgramMemCapacity);
     flt *GlobalMemory = Platform_AllocateMemory(GlobalMemCapacity * sizeof(flt));
     def_table_entry *DefTableArray = Platform_AllocateMemory(DefTableCapacity * sizeof(def_table_entry));
@@ -447,9 +445,11 @@ graph_state Graph_OnEntry(void)
 
     };
     Graph_UpdateScaling(&State, ScrWidth);
+    uint ScratchpadSize = Jit_Init(NULL, 0, 0, 0, 0, 0, 0, 0, 0);
+    void *Scratchpad = Platform_AllocateMemory(ScratchpadSize);
     ASSERT(0 == Jit_Init(
             &State.Jit, 
-            Scratchpad, ScratchpadCapacity,
+            Scratchpad, ScratchpadSize,
             GlobalMemory, GlobalMemCapacity, 
             ProgramMemory, ProgramMemCapacity, 
             DefTableArray, DefTableCapacity
@@ -459,7 +459,8 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "g(m) = -m\n"
+        "f(x) = x*x\n"
+        "g(m) = 2 + f(m)\n"
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)
