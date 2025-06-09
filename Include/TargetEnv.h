@@ -57,11 +57,7 @@ void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
 /* returns the function's location */
 uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize);
 void Emit_FunctionExit(jit_emitter *Emitter);
-void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value);
-
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
-int Emit_Jump(jit_emitter *Emitter);
-void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst);
 
 
 /* TARGETENV_<platform name> must be defined via compilation flags */

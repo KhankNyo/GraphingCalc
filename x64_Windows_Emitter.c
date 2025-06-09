@@ -65,11 +65,6 @@ static const char *sXmmReg[] = {
     "xmm6",
     "xmm7",
 };
-static const u8 sPrologue[] = {
-    0x50 + RBP,                                 /* push rbp */
-    0x48, 0x89, MODRM(3, RSP, RBP),             /* mov rbp, rsp */
-    0x48, 0x81, MODRM(3, 5, RSP), 0, 0, 0, 0    /* sub rsp, 0 */
-};
 static const u8 sStoreSingle32[] = {
     0x66, 0x0F, 0x7E,
 };
@@ -294,35 +289,30 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize)
     /* push rbp 
      * mov rbp, rsp
      * sub rsp, memsize
-     * ...
      * */
     while (Emitter->Base.BufferSize % 0x10 != 0)
     {
         Emit(Emitter, 1, 0x90); /* nop */
     }
-    uint Location = EmitArray(Emitter, sPrologue, sizeof sPrologue - 4);
-    EmitArray(Emitter, (u8 *)&StackSize, 4);
-    return Location;
-#if 0
-    for (int i = 0; i < ParamCount; i++)
+    uint Location = Emit(Emitter, 1 + 3, 
+        0x50 + RBP,                     /* push rbp */
+        0x48, 0x89, MODRM(3, RSP, RBP)  /* mov rbp, rsp */
+    );
+    if (IN_RANGE(INT8_MIN, StackSize, INT8_MAX))
     {
-        /* 0x10 = rbp and retaddr, 
-         * 0x8 = shadow space for first argument (rcx/global ptr reg) */
-        int Displacement = 0x10 + 0x8 + i*sizeof(double); 
-        if (i < TargetEnv_GetArgRegCount())
-        {
-            Emit_Store(Emitter, TargetEnv_GetArgReg(i), RBP, Displacement);
-        }
-
-        Params[i] = (jit_expression) {
-            .Storage = STORAGE_MEM,
-            .As.Mem = {
-                .Offset = Displacement,
-                .BaseReg = RBP
-            },
-        };
+        Emit(Emitter, 3, 
+            0x48, 0x83, MODRM(3, 5, RSP) /* sub rsp, imm8 */
+        );
+        EmitArray(Emitter, (u8 *)&StackSize, 1);
     }
-#endif
+    else
+    {
+        Emit(Emitter, 3, 
+            0x48, 0x81, MODRM(3, 5, RSP) /* sub rsp, imm32 */
+        );
+        EmitArray(Emitter, (u8 *)&StackSize, 1);
+    }
+    return Location;
 }
 
 void Emit_FunctionExit(jit_emitter *Emitter)
@@ -333,14 +323,6 @@ void Emit_FunctionExit(jit_emitter *Emitter)
     Emit(Emitter, 2, 0xC9, 0xC3);
 }
 
-void Emit_PatchStackSize(jit_emitter *Emitter, uint FunctionLocation, i32 Value)
-{
-    ASSERT(FunctionLocation + sizeof(sPrologue) <= Emitter->Base.BufferCapacity, "bad function location");
-    u8 *Location = Emitter->Base.Buffer 
-        + FunctionLocation 
-        + sizeof(sPrologue) - 4;
-    MemCpy(Location, &Value, 4);
-}
 
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
@@ -348,22 +330,6 @@ void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
     i32 Rel32 = FunctionLocation - (Emitter->Base.BufferSize + 5);
     Emit(Emitter, 1, 0xE8);
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
-}
-
-int Emit_Jump(jit_emitter *Emitter)
-{
-    /* jmp 0 */
-    u32 Location = 0;
-    int PatchLocation = Emit(Emitter, 1, 0xE9);
-    EmitArray(Emitter, (u8 *)&Location, sizeof Location);
-    return PatchLocation;
-}
-
-void Emitter_PatchJump(jit_emitter *Emitter, uint JumpInsLocation, uint Dst)
-{
-    ASSERT(JumpInsLocation < Emitter->Base.BufferCapacity, "patch jump instruction location");
-    i32 Rel32 = (i64)Dst - (i64)(JumpInsLocation + 5);
-    MemCpy(Emitter->Base.Buffer + JumpInsLocation + 1, &Rel32, sizeof Rel32);
 }
 
 
@@ -535,7 +501,7 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             WriteInstruction(&Disasm, "mov ");
             X64DisasmModRM(&Disasm, MODRM_SRC_DST, sIntReg);
         }
-        else if (0x81 == Second)
+        else if (0x81 == Second) /* sub rm, imm32 */
         {
             u8 ModRm = ConsumeByte(&Disasm);
             uint Mod = ModRm >> 6;
@@ -545,6 +511,20 @@ uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBu
             {
                 WriteInstruction(&Disasm, "sub ");
                 i32 Immediate = ConsumeDWord(&Disasm);
+                WriteInstruction(&Disasm, "%s, 0x%x", sIntReg[Rm], Immediate);
+            }
+            else Unknown = true;
+        }
+        else if (0x83 == Second) 
+        {
+            u8 ModRm = ConsumeByte(&Disasm);
+            uint Mod = ModRm >> 6;
+            uint Reg = (ModRm >> 3) & 0x7;
+            uint Rm = ModRm & 0x7;
+            if (0x3 == Mod && 5 == Reg) /* sub r, imm */
+            {
+                WriteInstruction(&Disasm, "sub ");
+                i32 Immediate = (i32)(i8)ConsumeByte(&Disasm);
                 WriteInstruction(&Disasm, "%s, 0x%x", sIntReg[Rm], Immediate);
             }
             else Unknown = true;
@@ -660,5 +640,5 @@ Out:
 }
 
 #undef PEEK
-
+#undef PROLOGUE_SIZE
 

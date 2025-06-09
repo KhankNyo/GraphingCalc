@@ -1175,7 +1175,6 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
 
     Jit_TranslateIr(Jit);
     Jit_Disassemble(Jit);
-    exit(0);
     return (jit_result) {
         .GlobalData = Jit->Storage.GlobalMemory,
         .GlobalSymbol = Jit->Global.Head->Next,

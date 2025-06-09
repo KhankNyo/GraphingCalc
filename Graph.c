@@ -459,6 +459,7 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
+        "h() = 4\n"
         "f(x) = x*x\n"
         "g(m) = 2 + f(m)\n"
         ;
