@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "Common.h"
-#include "Include/Platform.h"
+#include "Platform.h"
 #include "Platform.h"
 #include "Jit.h"
 
@@ -471,8 +471,8 @@ graph_state Graph_OnEntry(void)
     {
         printf("Compilation OK, calling init: \n");
         Platform_EnableExecution(ProgramMemory, ProgramMemCapacity);
-        jit_init32 Init = Jit_GetInit32(&State.Jit, &sResult);
-        Init(GlobalMemory);
+        jit_init32 Init = (jit_init32)Jit_GetFunctionPtr(&State.Jit, sResult.InitGlobal);
+        Init(sResult.GlobalData);
         printf("Call OK.\n");
     }
 
@@ -590,14 +590,15 @@ void Graph_OnRedrawRequest(graph_state *State, platform_screen_buffer *Ctx)
     };
 
     /* graph each function */
-    def_table_entry *i = sResult.GlobalSymbol;
+    jit_function *i = sResult.FunctionList;
     uint k = 0;
     while (i)
     {
-        if (i->Type == TYPE_FUNCTION && i->As.Function.ParamCount == 1)
+        /* only graph functions with 1 parameter */
+        if (i->ParamCount == 1)
         {
             typedef flt (*graphable_fn)(flt *GlobalData, flt Param);
-            graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, &i->As.Function);
+            graphable_fn Fn = (graphable_fn)Jit_GetFunctionPtr(&State->Jit, i);
 
             flt PrevX = GraphLeft;
             flt PrevY = Fn(sResult.GlobalData, PrevX);

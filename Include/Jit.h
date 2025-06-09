@@ -15,13 +15,23 @@ typedef enum jit_compilation_flags
     JIT_COMPFLAG_SIMD       = 1 << 1,   /* default is scalar code, NOTE: if this flag is specified, GlobalMemory passed into Jit_Init must be aligned to the target's alignment requirement for vector code */
 } jit_compilation_flags;
 
+typedef struct jit_function 
+{
+    int ParamCount; /* params are always floating point */
+    uint ProgramOffset;
+    uint ProgramLength;
+
+    struct jit_function *Next;
+} jit_function;
+
 typedef void (*jit_init32)(float *GlobalMemory);
 typedef void (*jit_init64)(double *GlobalMemory);
 typedef struct jit_result
 {
     const char *ErrMsg;
     void *GlobalData;
-    def_table_entry *GlobalSymbol;
+    jit_function *InitGlobal;
+    jit_function *FunctionList;
 } jit_result;
 
 typedef struct jit_ir_compiler jit_ir_compiler;
@@ -63,8 +73,6 @@ uint Jit_Init(
 void Jit_Destroy(jit *Jit);
 
 jit_result Jit_Compile(jit *Jit, jit_compilation_flags CompFlags, const char *Expr);
-jit_init32 Jit_GetInit32(jit *Jit, const jit_result *Result);
-jit_init64 Jit_GetInit64(jit *Jit, const jit_result *Result);
 /* NOTE: every function compiled has double/float *GlobalMemory as first param */
 void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn);
 
