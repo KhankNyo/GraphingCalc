@@ -28,7 +28,8 @@
 #define MIN(a, b) ((a) < (b)? (a) : (b))
 #define STATIC_ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define ABS(a) ((a) < 0? -(a) : a)
-#define ROUND_TO_MULTIPLE(x, multiple) (((x) + (multiple)) / (multiple) * (multiple))
+#define ROUND_UP_TO_MULTIPLE(x, multiple) (((x) + (multiple)) / (multiple) * (multiple))
+#define ROUND_DOWN_TO_MULTIPLE(x, multiple) ((x) / (multiple) * (multiple))
 
 #define true 1
 #define false 0

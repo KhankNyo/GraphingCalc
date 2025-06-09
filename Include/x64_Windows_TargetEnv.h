@@ -62,7 +62,7 @@ static inline int TargetEnv_GetShadowSpaceSize(void)
 static inline int TargetEnv_AlignStackSize(int StackSize)
 {
     if (StackSize % 16)
-        return ROUND_TO_MULTIPLE(StackSize, 16);
+        return ROUND_UP_TO_MULTIPLE(StackSize, 16);
     return StackSize;
 }
 /* MS x64 first argument */

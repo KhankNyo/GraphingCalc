@@ -12,7 +12,6 @@ static const char *Error_GetLineEnd(const char *TokenStr)
     const char *i = TokenStr;
     while (*i && '\n' != *i)
     {
-        printf("%c\n", *i);
         i++;
     }
 

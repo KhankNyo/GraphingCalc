@@ -24,40 +24,6 @@ typedef struct jit_result
     def_table_entry *GlobalSymbol;
 } jit_result;
 
-typedef enum jit_ir_op_type 
-{
-    IR_OP_ADD,
-    IR_OP_SUB,
-    IR_OP_MUL,
-    IR_OP_DIV,
-    IR_OP_NEG,
-    IR_OP_LOAD,
-    IR_OP_CALL,
-    IR_OP_SWAP,
-} jit_ir_op_type;
-typedef enum jit_ir_data_type 
-{
-    IR_DATA_VARREF,
-    IR_DATA_CONST,
-} jit_ir_data_type;
-typedef struct jit_ir_data 
-{
-    jit_ir_data_type Type;
-    union {
-        double Const;
-        strview VarRef;
-    } As;
-} jit_ir_data;
-typedef struct jit_ir_op
-{
-    jit_ir_op_type Type;
-    union {
-        int LoadIndex; 
-        int ArgCount;
-    };
-    strview FnName;
-} jit_ir_op;
-
 typedef struct jit 
 {
     jit_compilation_flags Flags;
@@ -67,27 +33,27 @@ typedef struct jit
     int Offset;
     uint SafePeekDist;
 
-    int LocalVarCount, LocalVarBase, LocalVarCapacity;
-    jit_variable *LocalVars;
-    int ScopeCount;
+    bool8 InLocalScope;
+    int TmpParamCount, TmpParamCapacity;
+    jit_variable *TmpParam;
     def_table Global;
+    jit_token Curr, Next;
 
-    struct jit_token Curr, Next;
-
-#if 0
-    jit_expression *ExprStack;
-    int ExprStackSize, ExprStackCapacity;
-#else
-    jit_ir_op IrOp[256];
+    jit_ir_op *IrOp;
     uint IrOpCount, IrOpCapacity;
-    jit_ir_data IrData[256];
+    jit_ir_data *IrData;
     uint IrDataCount, IrDataCapacity;
-#endif
+    jit_expression *IrStack;
+    uint IrStackCount, IrStackCapacity;
 
     int VarDeclEnd;
     jit_emitter Emitter;
     jit_storage_manager Storage;
     jit_error Error;
+
+    u8 *ScratchpadPtr;
+    uint ScratchpadSize, ScratchpadCapacity;
+    bool8 IsScratchpadReserved;
 } jit;
 
 /* returns 0 on success, otherwise returns minimum scratch pad memory size */

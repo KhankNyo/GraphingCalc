@@ -9,6 +9,8 @@ typedef struct jit_function_parameter jit_function_parameter;
 typedef struct jit_variable jit_variable;
 typedef struct jit_function jit_function;
 typedef struct jit_debug_info jit_debug_info;
+typedef struct jit_ir_op jit_ir_op;
+typedef struct jit_ir_data jit_ir_data;
 
 typedef enum jit_storage_type 
 {

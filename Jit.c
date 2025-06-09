@@ -1,3 +1,4 @@
+#include "Include/JitCommon.h"
 #include "TargetEnv.h"
 #include "Jit.h"
 #include "DefTable.h"
@@ -18,11 +19,85 @@ typedef enum precedence
     PREC_UNARY,
 } precedence;
 
-#if 0
-static bool8 Jit_ParseExpr(jit *Jit, precedence Prec);
-#else
-static int Jit_ParseExpr(jit *Jit, precedence Prec);
-#endif
+typedef enum jit_ir_op_type 
+{
+    IR_OP_ADD,
+    IR_OP_SUB,
+    IR_OP_MUL,
+    IR_OP_DIV,
+    IR_OP_NEG,
+    IR_OP_LOAD,
+    IR_OP_CALL,
+    IR_OP_SWAP,
+} jit_ir_op_type;
+typedef enum jit_ir_data_type 
+{
+    IR_DATA_VARREF,
+    IR_DATA_CONST,
+} jit_ir_data_type;
+struct jit_ir_data 
+{
+    jit_ir_data_type Type;
+    union {
+        double Const;
+        strview VarRef;
+    } As;
+};
+struct jit_ir_op
+{
+    strview FnName;
+    jit_ir_op_type Type;
+    union {
+        int LoadIndex; 
+        int ArgCount;
+    };
+};
+
+#define SCRATCHPAD_COMMIT(p_jit, ptr, count) (ptr = Jit_Scratchpad_Commit(p_jit, count, sizeof((ptr)[0])))
+
+static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec);
+
+
+
+static u8 *Jit_GetEmitterBuffer(jit *Jit)
+{
+    return Jit->Emitter.Base.Buffer;
+}
+
+static u8 Jit_GetEmitterBufferSize(const jit *Jit)
+{
+    return Jit->Emitter.Base.BufferSize;
+}
+
+static void *Jit_Scratchpad_Top(jit *Jit)
+{
+    return Jit->ScratchpadPtr + Jit->ScratchpadSize;
+}
+
+static uint Jit_Scratchpad_Reserve(jit *Jit, uint DataSize)
+{
+    ASSERT(!Jit->IsScratchpadReserved, "Reserve called twice.");
+    Jit->IsScratchpadReserved = true;
+    uint Capacity = ROUND_DOWN_TO_MULTIPLE(Jit->ScratchpadCapacity - Jit->ScratchpadSize, sizeof(max_align_t)) / DataSize;
+    return Capacity;
+}
+
+static void *Jit_Scratchpad_Commit(jit *Jit, uint Count, uint DataSize)
+{
+    Jit->IsScratchpadReserved = false;
+    uint CommitSize = DataSize * Count;
+    ASSERT(CommitSize <= Jit->ScratchpadCapacity, "unreachable");
+    void *Ptr = Jit->ScratchpadPtr + Jit->ScratchpadSize;
+    Jit->ScratchpadSize += CommitSize;
+    return Ptr;
+}
+
+static void Jit_Scratchpad_Decommit(jit *Jit, uint Count, uint DataSize)
+{
+    uint DecommitSize = DataSize * Count;
+    ASSERT(DecommitSize <= Jit->ScratchpadSize, "unreachable");
+    Jit->ScratchpadSize -= DecommitSize;
+}
 
 
 static bool8 ChInRange(char Lower, char n, char Upper)
@@ -255,30 +330,10 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
 }
 
 
-static void Jit_Reset(jit *Jit, const char *Expr, jit_compilation_flags Flags)
-{
-    Jit->Flags = Flags;
-    Jit->Start = Expr;
-    Jit->End = Expr;
-    Jit->Line = 1;
-    Jit->Offset = 1;
-    Jit->LocalVarCount = 0;
-    Jit->LocalVarBase = 0;
-    Jit->VarDeclEnd = -1;
-#if 0
-    Jit->ExprStackSize = 0;
-#else
-#endif
-    ConsumeToken(Jit);
 
-    Error_Reset(&Jit->Error);
-    DefTable_Reset(&Jit->Global);
 
-    bool8 EmitFloat32Instructions = 0 != (Flags & JIT_COMPFLAG_FLOAT32);
-    int FltSize = EmitFloat32Instructions? sizeof(float) : sizeof(double);
-    Storage_Reset(&Jit->Storage, FltSize);
-    Emitter_Reset(&Jit->Emitter, EmitFloat32Instructions);
-}
+
+
 
 
 static jit_expression Jit_CopyToReg(jit *Jit, int Reg, const jit_expression *Expr)
@@ -305,11 +360,11 @@ static jit_variable *Jit_FindVariable(jit *Jit, strview VarName)
 {
     const char *Ptr = VarName.Ptr;
     int Len = VarName.Len;
-    if (Jit->ScopeCount) /* in local scope */
+    if (Jit->InLocalScope)
     {
-        for (int i = Jit->LocalVarBase; i < Jit->LocalVarCount; i++)
+        for (int i = 0; i < Jit->TmpParamCount; i++)
         {
-            jit_variable *Variable = &Jit->LocalVars[i];
+            jit_variable *Variable = &Jit->TmpParam[i];
             if (Len == Variable->Dbg.Str.Len 
             && StrEqu(Ptr, Variable->Dbg.Str.Ptr, Len))
             {
@@ -330,6 +385,33 @@ static jit_variable *Jit_FindVariable(jit *Jit, strview VarName)
 
 
 
+static void Jit_Ir_Begin(jit *Jit)
+{
+    Jit->IrStackCount = 0;
+    Jit->IrDataCount = 0;
+    SCRATCHPAD_COMMIT(Jit, Jit->IrStack, Jit->IrStackCapacity);
+    SCRATCHPAD_COMMIT(Jit, Jit->IrData, Jit->IrDataCapacity);
+
+    Jit->IrOpCount = 0;
+    Jit->IrOpCapacity = Jit_Scratchpad_Reserve(Jit, sizeof(Jit->IrOp[0]));
+    SCRATCHPAD_COMMIT(Jit, Jit->IrOp, Jit->IrOpCapacity);
+}
+
+static void Jit_Ir_End(jit *Jit)
+{
+    Jit->IrOp = NULL;
+    Jit->IrStack = NULL;
+    Jit->IrData = NULL;
+    Jit_Scratchpad_Decommit(Jit, 
+        Jit->IrOpCapacity*sizeof(Jit->IrOp[0])
+        + Jit->IrDataCapacity*sizeof(Jit->IrData[0])
+        + Jit->IrStackCapacity*sizeof(Jit->IrStack[0]),
+        1
+    );
+    Jit->IrOpCapacity = 0;
+    Jit->IrStackCapacity = 0;
+    Jit->IrDataCapacity = 0;
+}
 
 static jit_ir_op *Ir_PushOp(jit *Jit, jit_ir_op_type Type, int LoadIndexOrArgCount)
 {
@@ -340,6 +422,7 @@ static jit_ir_op *Ir_PushOp(jit *Jit, jit_ir_op_type Type, int LoadIndexOrArgCou
     Op->ArgCount = LoadIndexOrArgCount;
     return Op;
 }
+
 static uint Ir_PushData(jit *Jit, const jit_ir_data *Data)
 {
     ASSERT(Jit->IrDataCount < Jit->IrDataCapacity, "size");
@@ -347,6 +430,7 @@ static uint Ir_PushData(jit *Jit, const jit_ir_data *Data)
     Jit->IrData[Index] = *Data;
     return Index;
 }
+
 static uint Ir_PushConst(jit *Jit, double Const)
 {
     jit_ir_data Tmp = {
@@ -355,6 +439,7 @@ static uint Ir_PushConst(jit *Jit, double Const)
     };
     return Ir_PushData(Jit, &Tmp);
 }
+
 static uint Ir_PushVarRef(jit *Jit, strview VarName)
 {
     jit_ir_data Tmp = {
@@ -401,7 +486,7 @@ static int Jit_ParseUnary(jit *Jit)
     } break;
     case TOK_LPAREN: /* (expr) */
     {
-        DataIndex = Jit_ParseExpr(Jit, PREC_EXPR);
+        DataIndex = Jit_Ir_CompileExpr(Jit, PREC_EXPR);
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
     } break;
     case TOK_IDENTIFIER:
@@ -414,7 +499,7 @@ static int Jit_ParseUnary(jit *Jit)
             {
                 /* compile the arguments and load them on the ir stack */
                 do {
-                    int Arg = Jit_ParseExpr(Jit, PREC_EXPR);
+                    int Arg = Jit_Ir_CompileExpr(Jit, PREC_EXPR);
                     if (Arg > -1)
                         Ir_PushOp(Jit, IR_OP_LOAD, Arg);
                     ArgCount++;
@@ -458,13 +543,14 @@ static precedence PrecedenceOf(jit_token_type Operator)
 }
 
 
-static int Jit_ParseExpr(jit *Jit, precedence Prec)
+static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec)
 {
     int Left = Jit_ParseUnary(Jit);
     while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
     {
         jit_token_type Oper = ConsumeToken(Jit).Type;
-        int Right = Jit_ParseExpr(Jit, PrecedenceOf(Oper) + 1);
+        int Right = Jit_Ir_CompileExpr(Jit, PrecedenceOf(Oper) + 1);
+
         /* const expr, evaluate data now */
         if (Left != -1 && Right != -1 
         && IR_DATA_CONST == Jit->IrData[Left].Type 
@@ -628,9 +714,9 @@ static jit_expression Jit_TranslateIr(jit *Jit)
 {
 #define PSH(data) (IrStack[IrStackCount++] = (data))
 #define POP() (IrStack[--IrStackCount])
-    jit_expression IrStack[256];
+    jit_expression *IrStack = Jit->IrStack;
     uint IrStackCount = 0, 
-         IrStackCapacity = STATIC_ARRAY_SIZE(IrStack);
+         IrStackCapacity = Jit->IrStackCapacity;
     for (uint i = 0; i < Jit->IrOpCount; i++)
     {
         ASSERT(IrStackCount < IrStackCapacity, "size");
@@ -718,49 +804,52 @@ static jit_expression Jit_TranslateIr(jit *Jit)
 
 
 
-static u8 *Jit_GetEmitterBuffer(jit *Jit)
+
+
+static void Jit_Function_BeginScope(jit *Jit)
 {
-    return Jit->Emitter.Base.Buffer;
-}
 
-static u8 Jit_GetEmitterBufferSize(const jit *Jit)
-{
-    return Jit->Emitter.Base.BufferSize;
-}
-
-
-static void Jit_FunctionBeginScope(jit *Jit, jit_function *Function)
-{
-    Function->ParamStart = Jit->LocalVarCount;
-    Function->ParamCount = 0;
-
-    /* add a new scope */
-    Jit->ScopeCount++;
-    Jit->LocalVarBase = Jit->LocalVarCount;
-    /* reset mem stack */
+    ASSERT(!Jit->InLocalScope, "TODO: errmsg: nesting is not supported");
+    Jit->InLocalScope = true;
     Storage_PushScope(&Jit->Storage);
 }
 
-static void Jit_FunctionEndScope(jit *Jit)
+static void Jit_Function_EndScope(jit *Jit)
 {
-    /* back up a scope */
-    Jit->ScopeCount--;
+    ASSERT(Jit->InLocalScope, "unreachable");
+    Jit->InLocalScope = false;
     Storage_PopScope(&Jit->Storage);
+    Jit_Scratchpad_Decommit(Jit, Jit->TmpParamCount, sizeof(Jit->TmpParam[0]));
 }
 
-static void Jit_FunctionPushLocal(jit *Jit, jit_function *Function, const jit_token *Parameter)
+static void Jit_Function_BeginParamDecl(jit *Jit, jit_function *Function)
 {
-    if (Jit->LocalVarCount + 1 > Jit->LocalVarCapacity)
+    /* use scratch pad */
+    Jit->TmpParam = Jit_Scratchpad_Top(Jit);
+    Jit->TmpParamCapacity = Jit_Scratchpad_Reserve(Jit, sizeof(Jit->TmpParam[0]));
+    Jit->TmpParamCount = 0;
+    Function->ParamCount = 0;
+}
+
+
+static void Jit_Function_PushParam(jit *Jit, jit_function *Function, const jit_token *Parameter)
+{
+    if (Jit->TmpParamCount + 1 > Jit->TmpParamCapacity)
     {
         Error_AtToken(&Jit->Error, Parameter, "Out of memory for param.");
         return;
     }
 
-    Jit->LocalVars[Jit->LocalVarCount] = (jit_variable) {
+    Jit->TmpParam[Jit->TmpParamCount] = (jit_variable) {
         .Dbg.Str = Parameter->Str,
     };
-    Jit->LocalVarCount++;
+    Jit->TmpParamCount++;
     Function->ParamCount++;
+}
+
+static void Jit_Function_EndParamDecl(jit *Jit)
+{
+    Jit_Scratchpad_Commit(Jit, Jit->TmpParamCount, sizeof(Jit->TmpParam[0]));
 }
 
 static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
@@ -772,58 +861,62 @@ static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
 }
 
 
-static void Jit_ResetIr(jit *Jit)
-{
-    Jit->IrOpCount = 0;
-    Jit->IrOpCapacity = STATIC_ARRAY_SIZE(Jit->IrOp);
-    Jit->IrDataCount = 0;
-    Jit->IrDataCapacity = STATIC_ARRAY_SIZE(Jit->IrData);
-}
 
-static void FunctionDecl(jit *Jit, jit_token FnName)
+
+static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
 {
     /* consumed '(' */
-    jit_function *Function = DefineFunction(Jit, FnName.Str.Ptr, FnName.Str.Len);
-    Jit_FunctionBeginScope(Jit, Function);
+    jit_function *Function = DefineFunction(Jit, FnName->Str.Ptr, FnName->Str.Len);
+    Jit_Function_BeginScope(Jit);
 
+    /* function params */
+    Jit_Function_BeginParamDecl(Jit, Function);
     if (TOK_RPAREN != NextToken(Jit).Type)
     {
         do {
             ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
             jit_token Parameter = CurrToken(Jit); 
-            Jit_FunctionPushLocal(Jit, Function, &Parameter);
+            Jit_Function_PushParam(Jit, Function, &Parameter);
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
+    Jit_Function_EndParamDecl(Jit);
     ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
 
+    /* function body */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after function declaration.");
-
+    Jit_Ir_Begin(Jit); 
     {
-        Jit_ResetIr(Jit);
-        int Index = Jit_ParseExpr(Jit, PREC_EXPR);
+        int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR);
         if (Index != -1)
             Ir_PushOp(Jit, IR_OP_LOAD, Index);
 
-        Function->Dbg.Location = Emit_FunctionEntry(&Jit->Emitter, Jit->LocalVars + Jit->LocalVarBase, Function->ParamCount);
+        Function->Dbg.Location = Emit_FunctionEntry(&Jit->Emitter, Jit->TmpParam, Jit->TmpParamCount);
 
         jit_expression ReturnValue = Jit_TranslateIr(Jit);
-
         Jit_CopyToReg(Jit, TargetEnv_GetReturnReg(), &ReturnValue);
-        Emit_FunctionExit(&Jit->Emitter);
-        Function->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit) - Function->Dbg.Location;
-        Emit_PatchStackSize(&Jit->Emitter, Function->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
     }
-    
-    Jit_FunctionEndScope(Jit);
+    Jit_Ir_End(Jit);
+
+    /* function end */
+    Emit_FunctionExit(&Jit->Emitter);
+    Function->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit) - Function->Dbg.Location;
+    Emit_PatchStackSize(&Jit->Emitter, Function->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
+
+    Jit_Function_EndScope(Jit);
 }
 
-static void VariableDecl(jit *Jit, jit_token VarName)
+static void VariableDecl(jit *Jit, const jit_token *VarName)
 {
     /* consumed VarName */
+    def_table_entry *Entry = DefTable_Define(&Jit->Global, VarName->Str.Ptr, VarName->Str.Len, TYPE_VARIABLE);
+    jit_variable *Variable = &Entry->As.Variable;
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after variable name.");
     
-    Jit_ResetIr(Jit);
-    Jit_ParseExpr(Jit, PREC_EXPR);
+    Jit_Ir_Begin(Jit);
+    {
+        int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR);
+    }
+    Jit_Ir_End(Jit);
 }
 
 
@@ -907,6 +1000,46 @@ static u32 Jit_Hash(const char *Str, int StrLen)
     return (u32)(Str[0] & 0x7F) << 8 | Str[StrLen - 1];
 }
 
+static void Jit_PatchJump(jit *Jit, uint Dst)
+{
+    if (-1 == Jit->VarDeclEnd)
+    {
+        Emitter_PatchJump(&Jit->Emitter, Jit->VarDeclEnd, Dst);
+    }
+}
+
+static void Jit_Reset(jit *Jit, const char *Expr, jit_compilation_flags Flags)
+{
+    Jit->ScratchpadSize = 0;
+    Jit->IrStackCount = 0;
+    Jit->IrDataCount = 0;
+    Jit->IrOpCount = 0;
+    Jit->IrOp = NULL;
+    Jit->IrData = NULL;
+    Jit->IrStack = NULL;
+    Jit->TmpParamCount = 0;
+
+    Jit->Flags = Flags;
+    Jit->Start = Expr; 
+    Jit->End = Expr;
+
+    Jit->Line = 1;
+    Jit->Offset = 1;
+    Jit->VarDeclEnd = -1;
+
+    Jit->Next = (jit_token) { 0 };
+    ConsumeToken(Jit);
+
+    Error_Reset(&Jit->Error);
+    DefTable_Reset(&Jit->Global);
+
+    bool8 EmitFloat32Instructions = 0 != (Flags & JIT_COMPFLAG_FLOAT32);
+    int FltSize = EmitFloat32Instructions? sizeof(float) : sizeof(double);
+    Storage_Reset(&Jit->Storage, FltSize);
+    Emitter_Reset(&Jit->Emitter, EmitFloat32Instructions);
+}
+
+
 
 uint Jit_Init(
     jit *Jit,
@@ -916,29 +1049,30 @@ uint Jit_Init(
     def_table_entry *DefTableArray, uint DefTableCapacity
 )
 {
-    uint MinScratchpadCapacity = 256*sizeof(jit_variable) + 128*sizeof(jit_expression);
+    ASSERT(Jit, "nullptr");
+
+    uint TmpParamCapacity = 64;
+    uint IrStackCapacity = 64;
+    uint IrDataCapacity = 256;
+    uint MinScratchpadCapacity = 
+        TmpParamCapacity*sizeof(Jit->TmpParam[0]) 
+        + IrStackCapacity*sizeof(Jit->IrStack[0])
+        + IrDataCapacity*sizeof(Jit->IrData[0])
+    ;
     if (ScratchpadCapacity < MinScratchpadCapacity)
     {
         return MinScratchpadCapacity;
     }
 
-    u8 *ScratchpadPtr = Scratchpad;
-    jit_expression *ExprStack = Scratchpad;
-    uint ExprStackCapacity = 128;
-    jit_variable *Locals = (jit_variable *)(ScratchpadPtr + ExprStackCapacity*sizeof(jit_expression));
-    uint LocalCapacity = (ScratchpadCapacity - ExprStackCapacity*sizeof(jit_expression)) / sizeof(jit_variable);
-
     *Jit = (jit) {
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
         .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
+        .ScratchpadPtr = Scratchpad,
+        .ScratchpadCapacity = ScratchpadCapacity,
 
-#if 0
-        .ExprStack = ExprStack,
-        .ExprStackCapacity = ExprStackCapacity,
-#else
-#endif
-        .LocalVars = Locals,
-        .LocalVarCapacity = LocalCapacity,
+        .IrStackCapacity = IrStackCapacity,
+        .IrDataCapacity = IrDataCapacity,
+        .TmpParamCapacity = TmpParamCapacity,
     };
     Emitter_Init(&Jit->Emitter, ProgramMemory, ProgramMemCapacity);
     return 0;
@@ -966,11 +1100,11 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
             jit_token Identifier = CurrToken(Jit);
             if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
             {
-                FunctionDecl(Jit, Identifier);
+                Jit_Function_Decl(Jit, &Identifier);
             }
             else 
             {
-                VariableDecl(Jit, Identifier);
+                VariableDecl(Jit, &Identifier);
             }
 
             /* skip all newlines */
@@ -978,9 +1112,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Expr)
             {}
         } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
     }
-#if 0
     Jit_PatchJump(Jit, Jit_GetEmitterBufferSize(Jit));
-#endif
     Emit_FunctionExit(&Jit->Emitter);
     Emit_PatchStackSize(&Jit->Emitter, Init->Dbg.Location, Storage_GetMaxStackSize(&Jit->Storage));
     Init->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit);
