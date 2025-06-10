@@ -68,32 +68,36 @@ static inline bool8 TargetEnv_x64_IsAVXSupported(void)
 }
 
 /* ms x64 calling conv */
+static inline int TargetEnv_StackMaxAlignment(int StackSize)
+{
+    if (StackSize % sizeof(max_align_t))
+        return ROUND_UP_TO_MULTIPLE(StackSize, sizeof(max_align_t));
+    return StackSize;
+}
+static inline int TargetEnv_StackMinAlignment(int StackSize)
+{
+    if (StackSize % 8)
+        return ROUND_UP_TO_MULTIPLE(StackSize, 8);
+    return StackSize;
+}
 static inline int TargetEnv_GetShadowSpaceSize(void)
 {
     return 32;
 }
-/* align to 16-byte boundary */
-static inline int TargetEnv_AlignStackSize(int StackSize)
-{
-    if (StackSize % 16)
-        return ROUND_UP_TO_MULTIPLE(StackSize, 16);
-    return StackSize;
-}
-/* MS x64 first argument */
 static inline int TargetEnv_GetGlobalPtrReg(void)
 {
-    return 1; /* RCX */
+    return RCX;
 }
-/* base pointer */
 static inline int TargetEnv_GetStackFrameReg(void)
 {
-    return 5; /* RBP */
+    return RBP;
 }
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize)
 {
+    (void)DataSize; /* stack will always be aligned to at least 8 byte boundary */
     ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
     /* rcx as global ptr reg, but we won't store it on stack */
-    int StackSize = (ArgCount + 1) * DataSize;
+    int StackSize = (ArgCount + 1) * 8;
     if (StackSize < 32)
         return 32;
     return StackSize;
@@ -107,40 +111,14 @@ static inline int TargetEnv_GetArgRegCount(void)
     /* rest are on stack */
     return 3;
 }
-static inline int TargetEnv_GetParamBaseReg(void)
-{
-    return 5; /* RBP */
-}
-static inline i32 TargetEnv_GetParamDisplacement(int ArgIndex, int DataSize)
-{
-    /* [rbp + 0x18 + index*size] */
-    return 0x18 + ArgIndex*DataSize; /* 0x10 = rbp, retaddr, 0x8 = rcx (global ptr) */
-}
 static inline bool8 TargetEnv_CallerShouldSave(int Reg)
 {
-    return IN_RANGE(0, Reg, TARGETENV_REG_COUNT);
+    return IN_RANGE(0, Reg, TARGETENV_REG_COUNT - 1);
 }
 static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex)
 {
     return ArgIndex < TargetEnv_GetArgRegCount();
 }
-#if 0
-static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize)
-{
-    ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
-    ASSERT(ArgIndex >= 4, "bad arg index");
-    return (ArgIndex + 1) * DataSize + StackTop;
-}
-static inline int TargetEnv_GetArgBaseReg(void)
-{
-    return 3; /* RBP */
-}
-static inline int TargetEnv_GetArgReg(int ArgIndex)
-{
-    ASSERT(ArgIndex < 4, "bad arg index");
-    return ArgIndex + 1;
-}
-#else
 static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
 {
     if (TargetEnv_IsArgumentInReg(Index))
@@ -153,17 +131,29 @@ static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
     }
     else
     {
+        (void)DataSize;
         jit_expression Mem = {
             .Storage = STORAGE_MEM,
             .As.Mem = {
                 .BaseReg = RSP,
-                .Offset = (Index + 1) * DataSize,
+                .Offset = (Index + 1) * 8, /* always align to 8-byte boundary */
             },
         };
         return Mem;
     }
 }
-#endif
+static inline jit_expression TargetEnv_GetParam(int Index, int DataSize)
+{
+    (void)DataSize;
+    jit_expression Mem = {
+        .Storage = STORAGE_MEM,
+        .As.Mem = {
+            .BaseReg = RBP,
+            .Offset = 0x10 + (Index + 1) * 8, /* always align to 8-byte boundary */
+        },
+    };
+    return Mem;
+}
 static inline int TargetEnv_GetReturnReg(void)
 {
     return 0; /* xmm0 */

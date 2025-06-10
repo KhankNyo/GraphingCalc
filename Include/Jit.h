@@ -39,9 +39,7 @@ typedef struct jit
     jit_token Curr, Next;
 
     jit_ir_op *IrOp;
-    int IrOpCount;
     jit_ir_data *IrData;
-    int IrDataCount;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;

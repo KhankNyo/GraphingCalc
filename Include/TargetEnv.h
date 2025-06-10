@@ -6,23 +6,18 @@ STATIC_ASSERT(sizeof(float) == 4, "float must be 32 bit");
 STATIC_ASSERT(sizeof(double) == 8, "double must be 64 bit"); /* TODO: some compilers might use long double for 64 bit float */
 
 /* common TargetEnv_* functions */
-static inline int TargetEnv_AlignStackSize(int StackSize);
+static inline int TargetEnv_StackMaxAlignment(int StackSize);
+static inline int TargetEnv_StackMinAlignment(int StackSize);
 static inline int TargetEnv_GetShadowSpaceSize(void);
 static inline int TargetEnv_GetGlobalPtrReg(void);
 static inline int TargetEnv_GetStackFrameReg(void);
 
 static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex);
 static inline bool8 TargetEnv_CallerShouldSave(int Reg);
-static inline int TargetEnv_GetParamBaseReg(void);
 static inline int TargetEnv_GetReturnReg(void);
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
-#if 0
-static inline int TargetEnv_GetArgReg(int ArgIndex);
-static inline int TargetEnv_GetArgBaseReg(void);
-static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
-#else
 static inline jit_expression TargetEnv_GetArg(int Index, int DataSize);
-#endif
+static inline jit_expression TargetEnv_GetParam(int Index, int DataSize);
 
 
 /* each platform defines their own emitter */

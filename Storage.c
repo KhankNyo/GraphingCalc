@@ -20,17 +20,17 @@ static int Storage_TryAllocateReg(jit_storage_manager *S)
     return -1;
 }
 
-int Storage_PushStack(jit_storage_manager *S, int Size)
+int Storage_PushStack(jit_storage_manager *S, int Count)
 {
-    CURR_SCOPE(S->StackSize) += Size;
+    CURR_SCOPE(S->StackSize) += Count * TargetEnv_StackMinAlignment(S->DataSize);
     CURR_SCOPE(S->MaxStackSize) = MAX(CURR_SCOPE(S->StackSize), CURR_SCOPE(S->MaxStackSize));
-    CURR_SCOPE(S->MaxStackSize) = TargetEnv_AlignStackSize(CURR_SCOPE(S->MaxStackSize));
+    CURR_SCOPE(S->MaxStackSize) = TargetEnv_StackMaxAlignment(CURR_SCOPE(S->MaxStackSize));
     return -CURR_SCOPE(S->StackSize);
 }
 
-void Storage_PopStack(jit_storage_manager *S, int Size)
+void Storage_PopStack(jit_storage_manager *S, int Count)
 {
-    CURR_SCOPE(S->StackSize) -= Size;
+    CURR_SCOPE(S->StackSize) -= Count * TargetEnv_StackMinAlignment(S->DataSize);
 }
 
 
@@ -78,7 +78,7 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
         if (CURR_SCOPE(S->RegIsBusy)[i] && TargetEnv_CallerShouldSave(i))
         {
             int RegToSpill = i;
-            i32 StackOffset = Storage_PushStack(S, S->DataSize);
+            i32 StackOffset = Storage_PushStack(S, 1);
 
             /* spill it to stack memory */
             int Count = Spill.Count;
@@ -102,7 +102,7 @@ void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
     {
         Storage_ForceAllocateReg(S, Spill->Reg[i]);
     }
-    Storage_PopStack(S, Spill->Count * S->DataSize);
+    Storage_PopStack(S, Spill->Count);
 }
 
 
@@ -143,7 +143,7 @@ jit_expression Storage_AllocateStack(jit_storage_manager *S)
     jit_expression Stack = {
         .Storage = STORAGE_MEM,
         .As.Mem = {
-            .Offset = Storage_PushStack(S, S->DataSize),
+            .Offset = Storage_PushStack(S, 1),
             .BaseReg = TargetEnv_GetStackFrameReg(),
         },
     };
