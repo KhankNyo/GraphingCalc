@@ -316,12 +316,13 @@ void Emit_FunctionExit(jit_emitter *Emitter)
 }
 
 
-void Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
+uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
     /* call rel32 */
     i32 Rel32 = FunctionLocation - (Emitter->Base.BufferSize + 5);
-    Emit(Emitter, 1, 0xE8);
+    uint Location = Emit(Emitter, 1, 0xE8);
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
+    return Location;
 }
 
 

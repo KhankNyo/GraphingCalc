@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <assert.h>
 
 #ifdef _MSC_VER
@@ -9,6 +10,9 @@
 #else
 #  define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
 #endif /* _MSC_VER */
+
+
+
 
 #define ASSERT(x, msg) assert((x) && (msg))
 #define TODO(msg) assert(false && "TODO: "msg)
