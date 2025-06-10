@@ -459,9 +459,10 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "h() = 4\n"
-        "f(x) = x*x\n"
-        "g(m) = 2 + f(m)\n"
+        "g(x) = 5\n"
+        "f(x) = x*x + 2*g(g(2)) + x\n"
+        "h(a, b, c, d, e) = a + b*c + (a*b)\n"
+        "k() = h(1, 2, 3, 4, 5)\n"
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)

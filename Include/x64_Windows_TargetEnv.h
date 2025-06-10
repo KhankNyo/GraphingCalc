@@ -1,9 +1,23 @@
 #ifndef TARGETENV_X64_WINDOWS_H
 #define TARGETENV_X64_WINDOWS_H
 
-#include "Common.h"
+#include "JitCommon.h"
 /* TODO: SSE only supports 8 regs, but AVX can do 16 */
 #define TARGETENV_REG_COUNT 8
+
+
+typedef enum reg_index 
+{
+    RAX = 0, 
+    RCX, 
+    RDX, 
+    RBX, 
+    RSP, 
+    RBP, 
+    RSI, 
+    RDI,
+} reg_index; 
+
 
 static inline bool8 TargetEnv_x64_IsAVXSupported(void);
 
@@ -93,6 +107,30 @@ static inline int TargetEnv_GetArgRegCount(void)
     /* rest are on stack */
     return 3;
 }
+static inline int TargetEnv_GetParamBaseReg(void)
+{
+    return 5; /* RBP */
+}
+static inline i32 TargetEnv_GetParamDisplacement(int ArgIndex, int DataSize)
+{
+    /* [rbp + 0x18 + index*size] */
+    return 0x18 + ArgIndex*DataSize; /* 0x10 = rbp, retaddr, 0x8 = rcx (global ptr) */
+}
+static inline bool8 TargetEnv_CallerShouldSave(int Reg)
+{
+    return IN_RANGE(0, Reg, TARGETENV_REG_COUNT);
+}
+static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex)
+{
+    return ArgIndex < TargetEnv_GetArgRegCount();
+}
+#if 0
+static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize)
+{
+    ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
+    ASSERT(ArgIndex >= 4, "bad arg index");
+    return (ArgIndex + 1) * DataSize + StackTop;
+}
 static inline int TargetEnv_GetArgBaseReg(void)
 {
     return 3; /* RBP */
@@ -102,28 +140,33 @@ static inline int TargetEnv_GetArgReg(int ArgIndex)
     ASSERT(ArgIndex < 4, "bad arg index");
     return ArgIndex + 1;
 }
-static inline int TargetEnv_GetParamBaseReg(void)
+#else
+static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
 {
-    return 5; /* RBP */
+    if (TargetEnv_IsArgumentInReg(Index))
+    {
+        jit_expression Reg = {
+            .Storage = STORAGE_REG,
+            .As.Reg = Index + 1,
+        };
+        return Reg;
+    }
+    else
+    {
+        jit_expression Mem = {
+            .Storage = STORAGE_MEM,
+            .As.Mem = {
+                .BaseReg = RSP,
+                .Offset = (Index + 1) * DataSize,
+            },
+        };
+        return Mem;
+    }
 }
-static inline i32 TargetEnv_GetParamDisplacement(int ArgIndex, int DataSize)
-{
-    return 0x18 + ArgIndex*DataSize; /* 0x10 = rbp, retaddr, 0x8 = rcx (global ptr) */
-}
-static inline bool8 TargetEnv_CallerShouldSave(int Reg)
-{
-    return IN_RANGE(0, Reg, TARGETENV_REG_COUNT);
-}
-static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize)
-{
-    ASSERT(DataSize == sizeof(double) || DataSize == sizeof(float), "invalid data size");
-    ASSERT(ArgIndex >= 4, "bad arg index");
-    return (ArgIndex + 1) * DataSize + StackTop;
-}
+#endif
 static inline int TargetEnv_GetReturnReg(void)
 {
     return 0; /* xmm0 */
 }
-
 
 #endif /* TARGETENV_X64_WINDOWS_H */

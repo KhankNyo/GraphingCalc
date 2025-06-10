@@ -94,10 +94,15 @@ storage_spill_data Storage_Spill(jit_storage_manager *S)
 
 void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
 {
+    for (int i = 0; i < TargetEnv_GetArgRegCount(); i++)
+    {
+        Storage_DeallocateReg(S, TargetEnv_GetArg(i, S->DataSize).As.Reg);
+    }
     for (int i = 0; i < Spill->Count; i++)
     {
         Storage_ForceAllocateReg(S, Spill->Reg[i]);
     }
+    Storage_PopStack(S, Spill->Count * S->DataSize);
 }
 
 

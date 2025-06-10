@@ -10,14 +10,19 @@ static inline int TargetEnv_AlignStackSize(int StackSize);
 static inline int TargetEnv_GetShadowSpaceSize(void);
 static inline int TargetEnv_GetGlobalPtrReg(void);
 static inline int TargetEnv_GetStackFrameReg(void);
-static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
-static inline int TargetEnv_GetArgRegCount(void);
-static inline int TargetEnv_GetArgBaseReg(void);
-static inline int TargetEnv_GetArgReg(int ArgIndex);
-static inline int TargetEnv_GetParamBaseReg(void);
+
+static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex);
 static inline bool8 TargetEnv_CallerShouldSave(int Reg);
-static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
+static inline int TargetEnv_GetParamBaseReg(void);
 static inline int TargetEnv_GetReturnReg(void);
+static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
+#if 0
+static inline int TargetEnv_GetArgReg(int ArgIndex);
+static inline int TargetEnv_GetArgBaseReg(void);
+static inline int TargetEnv_GetArgOffset(int StackTop, int ArgIndex, int DataSize);
+#else
+static inline jit_expression TargetEnv_GetArg(int Index, int DataSize);
+#endif
 
 
 /* each platform defines their own emitter */
@@ -55,7 +60,8 @@ void Emit_DivReg(jit_emitter *Emitter, int DstReg, int SrcReg);
 void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
 
 /* returns the function's location */
-uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize);
+uint Emit_FunctionEntry(jit_emitter *);
+void Emit_FunctionAllocateStack(jit_emitter *Emitter, i32 StackSize);
 void Emit_FunctionExit(jit_emitter *Emitter);
 void Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
 

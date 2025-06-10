@@ -33,18 +33,6 @@ typedef enum disasm_modrm_type
     MODRM_SRC_DST,
 } disasm_modrm_type;
 
-typedef enum reg_index 
-{
-    RAX = 0, 
-    RCX, 
-    RDX, 
-    RBX, 
-    RSP, 
-    RBP, 
-    RSI, 
-    RDI,
-} reg_index; 
-
 static const char *sIntReg[] = { 
     [RAX] = "rax", 
     [RCX] = "rcx",
@@ -284,7 +272,7 @@ void Emit_LoadZero(jit_emitter *Emitter, int DstReg)
 
 
 
-uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize)
+uint Emit_FunctionEntry(jit_emitter *Emitter)
 {
     /* push rbp 
      * mov rbp, rsp
@@ -298,6 +286,11 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize)
         0x50 + RBP,                     /* push rbp */
         0x48, 0x89, MODRM(3, RSP, RBP)  /* mov rbp, rsp */
     );
+    return Location;
+}
+
+void Emit_FunctionAllocateStack(jit_emitter *Emitter, i32 StackSize)
+{
     if (IN_RANGE(INT8_MIN, StackSize, INT8_MAX))
     {
         Emit(Emitter, 3, 
@@ -312,7 +305,6 @@ uint Emit_FunctionEntry(jit_emitter *Emitter, i32 StackSize)
         );
         EmitArray(Emitter, (u8 *)&StackSize, 1);
     }
-    return Location;
 }
 
 void Emit_FunctionExit(jit_emitter *Emitter)

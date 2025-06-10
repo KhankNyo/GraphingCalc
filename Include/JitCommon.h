@@ -85,7 +85,7 @@ struct jit_token
 
     union {
         double Number;
-        char ErrMsg[256];
+        const char *ErrMsg;
     } As;
 };
 
