@@ -224,40 +224,6 @@ static void Ir_Stack_SpillReg(jit_ir_stack *Stack, jit *Jit)
 }
 
 
-#if 0
-typedef struct jit_spill_stack 
-{
-    jit *Jit;
-} jit_spill_stack;
-
-static jit_spill_stack Ir_SpillStack_Init(jit *Jit)
-{
-    return (jit_spill_stack) {
-        .Jit = Jit,
-    };
-}
-
-static storage_spill_data *Ir_SpillStack_Top(jit_spill_stack *SpillStack, int Offset)
-{
-    ASSERT(Offset >= 0, "bad offset");
-    return (storage_spill_data *)Jit_Scratchpad_LeftPtr(SpillStack->Jit) - (1 + Offset);
-}
-
-static storage_spill_data *Ir_SpillStack_Push(jit_spill_stack *SpillStack, const storage_spill_data *Data)
-{
-    storage_spill_data *Top = Jit_Scratchpad_PushLeft(SpillStack->Jit, sizeof(*Top));
-    *Top = *Data;
-    return Top;
-}
-
-static storage_spill_data *Ir_SpillStack_Pop(jit_spill_stack *SpillStack)
-{
-    storage_spill_data *Top = Ir_SpillStack_Top(SpillStack, 0);
-    Jit_Scratchpad_PopLeft(SpillStack->Jit, sizeof(storage_spill_data));
-    return Top;
-}
-#endif
-
 typedef struct jit_fnref_stack
 {
     jit *Jit;
@@ -1057,18 +1023,8 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_CALL_ARG_START:
         {
-#if 0
-            /* spill registers that are in use */
-            storage_spill_data Spilled = Storage_Spill(&Jit->Storage);
-            Ir_SpillStack_Push(SpillStack, &Spilled);
-            for (int i = 0; i < Spilled.Count; i++)
-            {
-                Emit_Store(&Jit->Emitter, Spilled.Reg[i], TargetEnv_GetStackFrameReg(), Spilled.StackOffset[i]);
-            }
-#else
             /* make all previous expr on the stack a memory location */
             Ir_Stack_SpillReg(Stack, Jit);
-#endif
         } break;
         case IR_OP_CALL:
         {
@@ -1098,36 +1054,12 @@ static void Jit_TranslateIr(jit *Jit)
                 Ir_FnRef_Push(FnRef, Function, CallLocation);
             }
 
-#if 0
-            bool8 UsingReturnReg = true;
-            jit_reg ReturnReg = TargetEnv_GetReturnReg();
-            jit_expression Result;
-            /* NOTE: very important to unspill before pushing return value, because the IrStack and the spill stack 
-             * are both pushed and popped from the left of the jit's scratchpad */
-            storage_spill_data *Spilled = Ir_SpillStack_Pop(SpillStack);
-            Storage_Unspill(&Jit->Storage, Spilled);
-            for (int i = 0; i < Spilled->Count; i++)
-            {
-                if (TargetEnv_GetReturnReg() == Spilled->Reg[i]) /* the return register is about to get unspilled */
-                {
-                    /* save its value in a different register */
-                    Result = Storage_AllocateReg(&Jit->Storage);
-                    Emit_Move(&Jit->Emitter, Result.As.Reg, ReturnReg);
-                    UsingReturnReg = false;
-                }
-                Emit_Load(&Jit->Emitter, Spilled->Reg[i], TargetEnv_GetStackFrameReg(), Spilled->StackOffset[i]);
-            }
-            if (UsingReturnReg)
-            {
-                Result = Storage_ForceAllocateReg(&Jit->Storage, ReturnReg);
-            }
-#else
+            /* return */
             Storage_ForceAllocateReg(&Jit->Storage, TargetEnv_GetReturnReg());
             jit_expression Result = {
                 .Storage = STORAGE_REG, 
                 .As.Reg = TargetEnv_GetReturnReg(),
             };
-#endif
 
             /* push return value on the stack */
             Ir_Stack_Push(Stack, &Result);
@@ -1398,28 +1330,12 @@ uint Jit_Init(
     def_table_entry *DefTableArray, uint DefTableCapacity
 )
 {
-#if 0
-    uint MinEvalStackCapacity = 128;
-    uint MinIrDataCapacity = 1024 - 128;
-    uint MinIrOpCapacity = 3*1024;
-    uint MinScratchpadCapacity = 
-        + MinIrDataCapacity*sizeof(Jit->IrData[0])
-        + MinIrOpCapacity*sizeof(Jit->IrOp[0])
-        + MinEvalStackCapacity;
-    if (ScratchpadCapacity < MinScratchpadCapacity
-    || NULL == Jit)
-    {
-        printf("Min: %d\n", MinScratchpadCapacity);
-        return MinScratchpadCapacity;
-    }
-#else
     uint MinScratchpadCapacity = 64*1024;
     if (ScratchpadCapacity < MinScratchpadCapacity
     || NULL == Jit)
     {
         return MinScratchpadCapacity;
     }
-#endif
 
     *Jit = (jit) {
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),

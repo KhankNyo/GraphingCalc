@@ -54,47 +54,6 @@ void Storage_Reset(jit_storage_manager *S, int DataSize)
 }
 
 
-#if 0
-storage_spill_data Storage_Spill(jit_storage_manager *S)
-{
-    storage_spill_data Spill = { 0 };
-
-    /* spill call-clobbered registers */
-    for (uint i = 0; i < TARGETENV_REG_COUNT && CURR_SCOPE(S->BusyRegCount); i++)
-    {
-        if (CURR_SCOPE(S->RegIsBusy)[i] && TargetEnv_CallerShouldSave(i))
-        {
-            int RegToSpill = i;
-            i32 StackOffset = Storage_PushStack(S, 1);
-
-            /* spill it to stack memory */
-            int Count = Spill.Count;
-            Spill.Reg[Count] = RegToSpill;
-            Spill.StackOffset[Count] = StackOffset;
-            Spill.Count++;
-            Storage_DeallocateReg(S, RegToSpill);
-        }
-    }
-    return Spill;
-}
-
-
-void Storage_Unspill(jit_storage_manager *S, storage_spill_data *Spill)
-{
-    for (int i = 0; i < TargetEnv_GetArgRegCount(); i++)
-    {
-        Storage_DeallocateReg(S, TargetEnv_GetArg(i, S->DataSize).As.Reg);
-    }
-    for (int i = 0; i < Spill->Count; i++)
-    {
-        Storage_ForceAllocateReg(S, Spill->Reg[i]);
-    }
-    Storage_PopStack(S, Spill->Count);
-}
-#endif
-
-
-
 
 jit_reg Storage_TryAllocateReg(jit_storage_manager *S)
 {
@@ -121,62 +80,6 @@ void Storage_DeallocateReg(jit_storage_manager *S, uint Reg)
 }
 
 
-#if 0
-jit_expression Storage_ForceAllocateReg(jit_storage_manager *S, uint Reg)
-{
-    ASSERT(Reg < TARGETENV_REG_COUNT, "invalid reg");
-    CURR_SCOPE(S->BusyRegCount) += !CURR_SCOPE(S->RegIsBusy)[Reg];
-    CURR_SCOPE(S->RegIsBusy)[Reg] = true;
-
-    return (jit_expression) {
-        .Storage = STORAGE_REG,
-        .As.Reg = Reg
-    };
-}
-jit_expression Storage_AllocateStack(jit_storage_manager *S)
-{
-    jit_expression Stack = {
-        .Storage = STORAGE_MEM,
-        .As.Mem = {
-            .Offset = Storage_PushStack(S, 1),
-            .BaseReg = TargetEnv_GetStackFrameReg(),
-        },
-    };
-    CURR_SCOPE(S->MaxStackSize) = MAX(CURR_SCOPE(S->StackSize), CURR_SCOPE(S->MaxStackSize));
-    return Stack;
-}
-
-jit_expression Storage_AllocateGlobal(jit_storage_manager *S)
-{
-    ASSERT(S->GlobalSize < S->GlobalCapacity, "out of memory");
-    jit_expression Global = {
-        .Storage = STORAGE_MEM,
-        .As.Mem = {
-            .Offset = S->GlobalSize,
-            .BaseReg = TargetEnv_GetGlobalPtrReg(),
-        },
-    };
-    S->GlobalSize += S->DataSize;
-    return Global;
-}
-
-jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const)
-{
-    jit_expression Global = Storage_AllocateGlobal(S);
-    u8 *Ptr = (u8 *)S->GlobalMemory + Global.As.Mem.Offset;
-    if (sizeof(float) == S->DataSize)
-    {
-        float Const32 = Const;
-        MemCpy(Ptr, &Const32, S->DataSize);
-    }
-    else if (sizeof(double) == S->DataSize)
-    {
-        MemCpy(Ptr, &Const, S->DataSize);
-    }
-    else UNREACHABLE();
-    return Global;
-}
-#else
 void Storage_ForceAllocateReg(jit_storage_manager *S, jit_reg Reg)
 {
     ASSERT(Reg < TARGETENV_REG_COUNT, "invalid reg");
@@ -218,7 +121,6 @@ jit_mem Storage_AllocateConst(jit_storage_manager *S, double Const)
     else UNREACHABLE();
     return Global;
 }
-#endif
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset)
 {

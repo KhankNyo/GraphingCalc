@@ -31,9 +31,6 @@ jit_reg Storage_TryAllocateReg(jit_storage_manager *S);
 jit_mem Storage_AllocateStack(jit_storage_manager *S);
 jit_mem Storage_AllocateGlobal(jit_storage_manager *S);
 jit_mem Storage_AllocateConst(jit_storage_manager *S, double Const);
-//jit_expression Storage_AllocateStack(jit_storage_manager *S);
-//jit_expression Storage_AllocateGlobal(jit_storage_manager *S);
-//jit_expression Storage_AllocateConst(jit_storage_manager *S, double Const);
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg);
 int Storage_PushStack(jit_storage_manager *S, int Size); /* returns -StackSize */
