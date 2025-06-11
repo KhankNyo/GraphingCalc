@@ -1,9 +1,10 @@
 
 all common: 
-call: E8 rel32
-ret: C3
-push: 50 + reg
-pop: 58 + reg
+call: 	E8 rel32
+leave: 	C9
+ret: 	C3
+push: 	50 + reg
+pop: 	58 + reg
 
 
 VEX encoding: 2-byte: 
