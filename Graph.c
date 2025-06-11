@@ -459,8 +459,8 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        //"h(x) = g(x)*f(x) + f(x + 1)\n"
-        "h(x) = f(x + 1) + g(x)*f(x)\n"
+        "h(x) = g(x)*f(x) + f(x + 1)\n"
+        //"h(x) = f(x, 1) + g(x)*f(x)\n"
         "g(x) = x + 1\n"
         "f(x) = 2*x\n"
         ;

@@ -808,7 +808,7 @@ typedef struct jit_fnref_stack
 
 typedef struct jit_fnref 
 {
-    def_table_entry *Entry;
+    const jit_function *Function;
     uint Location;
 } jit_fnref;
 
@@ -826,10 +826,10 @@ static jit_fnref *Ir_FnRef_Top(jit_fnref_stack *FnRef, int Offset)
     return (jit_fnref *)Jit_Scratchpad_RightPtr(FnRef->Jit) + Offset;
 }
 
-static jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, def_table_entry *Entry, uint CallLocation)
+static jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, uint CallLocation)
 {
     jit_fnref *Top = Jit_Scratchpad_PushRight(FnRef->Jit, sizeof(*Top));
-    Top->Entry = Entry;
+    Top->Function = Function;
     Top->Location = CallLocation;
     return Top;
 }
@@ -854,7 +854,7 @@ static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
 
 
 
-static bool8 Jit_EmitOpCall(jit_ir_stack *Stack, int ArgCount)
+static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
 {
     jit *Jit = Stack->Jit;
     int IrStackCount = Ir_Stack_Count(Stack);
@@ -880,10 +880,8 @@ static bool8 Jit_EmitOpCall(jit_ir_stack *Stack, int ArgCount)
         } break;
         }
     }
+    /* done emitting actual instructions, pop ir stack */
     Ir_Stack_PopMultiple(Stack, ArgCount);
-
-    /* emit call */
-    return Emit_Call(&Jit->Emitter, 0);
 }
 
 static void PrintVars(jit *Jit, int Start, int Count)
@@ -902,6 +900,17 @@ static void PrintVars(jit *Jit, int Start, int Count)
     }
 }
 
+static jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName)
+{
+    def_table_entry *Entry = DefTable_Find(
+        &Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION
+    );
+    if (!Entry) /* undefined function */
+    {
+        return NULL;
+    }
+    return &Entry->As.Function;
+}
 
 static void Jit_TranslateIr(jit *Jit)
 {
@@ -1002,19 +1011,30 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_CALL:
         {
-            /* TODO: check arg count */
-            def_table_entry *Entry = DefTable_Find(&Jit->Global, Op->Call.FnName.Str.Ptr, Op->Call.FnName.Str.Len, TYPE_FUNCTION);
-            if (!Entry) /* undefined function */
+            jit_function *Function = Jit_FindFunction(Jit, &Op->Call.FnName);
+            if (!Function)
             {
-                Error_AtToken(&Jit->Error, &Op->Call.FnName, "Undefined function");
+                Error_AtToken(&Jit->Error, &Op->Call.FnName, "Undefined function.");
                 break;
             }
 
-            jit_function *Function = &Entry->As.Function;
-            uint CallLocation = Jit_EmitOpCall(Stack, Function->ParamCount);
+            /* check param and arg count */
+            if (Function->ParamCount != Op->Call.ArgCount)
+            {
+                const char *Plural = Function->ParamCount > 1? 
+                    "arguments" : "argument";
+                Error_AtToken(&Jit->Error, &Op->Call.FnName, "Expected %d %s, got %d instead.", 
+                    Function->ParamCount, Plural, Op->Call.ArgCount
+                );
+                break;
+            }
+
+            /* emit the args and call itself */
+            Jit_EmitCallArgs(Stack, Function->ParamCount);
+            uint CallLocation = Emit_Call(&Jit->Emitter, Function->Dbg.Location);
             if (FN_LOCATION_UNDEFINED == Function->Dbg.Location)
             {
-                Ir_FnRef_Push(FnRef, Entry, CallLocation);
+                Ir_FnRef_Push(FnRef, Function, CallLocation);
             }
 
             bool8 UsingReturnReg = true;
@@ -1080,6 +1100,7 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_NEG:
         {
+            /* stack.top = 0 - stack.top */
             jit_expression *Value = Ir_Stack_Pop(Stack);
             jit_expression Result = Storage_AllocateReg(&Jit->Storage);
             Emit_LoadZero(&Jit->Emitter, Result.As.Reg);
@@ -1099,14 +1120,8 @@ static void Jit_TranslateIr(jit *Jit)
     for (int i = 0; i < FunctionCallCount; i++)
     {
         jit_fnref *Ref = Ir_FnRef_Pop(FnRef);
-        ASSERT(Ref->Entry, "unreachable");
-        printf("Patching: %d -- %08x   call %.*s (%08x)\n", 
-            i, 
-            Ref->Location, 
-            Ref->Entry->As.Common.Str.Len, Ref->Entry->As.Common.Str.Ptr,
-            Ref->Entry->As.Function.Dbg.Location
-        );
-        Emitter_PatchCall(&Jit->Emitter, Ref->Location, Ref->Entry->As.Function.Dbg.Location);
+        ASSERT(Ref->Function, "nullptr");
+        Emitter_PatchCall(&Jit->Emitter, Ref->Location, Ref->Function->Dbg.Location);
     }
 }
 
@@ -1317,11 +1332,10 @@ uint Jit_Init(
         return MinScratchpadCapacity;
     }
 #else
-    uint MinScratchpadCapacity = 128*1024;
+    uint MinScratchpadCapacity = 64*1024;
     if (ScratchpadCapacity < MinScratchpadCapacity
     || NULL == Jit)
     {
-        printf("Min: %d\n", MinScratchpadCapacity);
         return MinScratchpadCapacity;
     }
 #endif
