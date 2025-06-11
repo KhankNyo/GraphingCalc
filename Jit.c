@@ -729,14 +729,13 @@ static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int Lo
 typedef struct jit_ir_stack 
 {
     jit *Jit;
-    int ScratchpadBase;
+    int Count;
 } jit_ir_stack;
 
 static jit_ir_stack Ir_Stack_Init(jit *Jit)
 {
     return (jit_ir_stack) {
         .Jit = Jit,
-        .ScratchpadBase = Jit->ScratchpadLeftByteCount,
     };
 }
 
@@ -748,6 +747,7 @@ static jit_expression *Ir_Stack_Top(jit_ir_stack *Stack, int Offset)
 
 static jit_expression *Ir_Stack_Push(jit_ir_stack *Stack, const jit_expression *Value)
 {
+    Stack->Count++;
     jit_expression *Top = Jit_Scratchpad_PushLeft(Stack->Jit, sizeof(*Top));
     *Top = *Value;
     return Top;
@@ -755,6 +755,8 @@ static jit_expression *Ir_Stack_Push(jit_ir_stack *Stack, const jit_expression *
 
 static jit_expression *Ir_Stack_Pop(jit_ir_stack *Stack)
 {
+    ASSERT(Stack->Count != 0, "Cannot pop stack");
+    Stack->Count--;
     jit_expression *Top = Ir_Stack_Top(Stack, 0);
     Jit_Scratchpad_PopLeft(Stack->Jit, sizeof(jit_expression));
     return Top;
@@ -767,7 +769,7 @@ static void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count)
 
 static int Ir_Stack_Count(const jit_ir_stack *Stack)
 {
-    return (Stack->Jit->ScratchpadLeftByteCount - Stack->ScratchpadBase) / sizeof(jit_expression);
+    return Stack->Count;
 }
 
 
@@ -885,6 +887,13 @@ static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
     }
     /* done emitting actual instructions, pop ir stack */
     Ir_Stack_PopMultiple(Stack, ArgCount);
+
+    /* deallocate argument registers */
+    for (int i = 0; i < ArgCount && TargetEnv_IsArgumentInReg(i); i++)
+    {
+        jit_reg Reg = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
+        Storage_DeallocateReg(&Jit->Storage, Reg);
+    }
 }
 
 static void PrintVars(jit *Jit, int Start, int Count)
@@ -1004,6 +1013,7 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_CALL_ARG_START:
         {
+#if 0
             /* spill registers that are in use */
             storage_spill_data Spilled = Storage_Spill(&Jit->Storage);
             Ir_SpillStack_Push(SpillStack, &Spilled);
@@ -1011,6 +1021,26 @@ static void Jit_TranslateIr(jit *Jit)
             {
                 Emit_Store(&Jit->Emitter, Spilled.Reg[i], TargetEnv_GetStackFrameReg(), Spilled.StackOffset[i]);
             }
+#else
+            /* make all previous expr on the stack a memory location */
+            for (int i = 0; i < Stack->Count; i++)
+            {
+                jit_expression *Elem = Ir_Stack_Top(Stack, i);
+                switch (Elem->Storage)
+                {
+                case STORAGE_MEM: break; /* already in memory, nothing to do */
+                case STORAGE_REG:
+                {
+                    jit_reg Src = Elem->As.Reg;
+                    jit_expression Location = Storage_AllocateStack(&Jit->Storage);
+                    Emit_Store(&Jit->Emitter, Src, Location.As.Mem.BaseReg, Location.As.Mem.Offset);
+                    Storage_DeallocateReg(&Jit->Storage, Src);
+
+                    *Elem = Location;
+                } break;
+                }
+            }
+#endif
         } break;
         case IR_OP_CALL:
         {
@@ -1040,6 +1070,7 @@ static void Jit_TranslateIr(jit *Jit)
                 Ir_FnRef_Push(FnRef, Function, CallLocation);
             }
 
+#if 0
             bool8 UsingReturnReg = true;
             jit_reg ReturnReg = TargetEnv_GetReturnReg();
             jit_expression Result;
@@ -1062,6 +1093,9 @@ static void Jit_TranslateIr(jit *Jit)
             {
                 Result = Storage_ForceAllocateReg(&Jit->Storage, ReturnReg);
             }
+#else
+            jit_expression Result = Storage_ForceAllocateReg(&Jit->Storage, TargetEnv_GetReturnReg());
+#endif
 
             /* push return value on the stack */
             Ir_Stack_Push(Stack, &Result);
