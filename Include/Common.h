@@ -7,6 +7,8 @@
 
 #if defined(_MSC_VER)
 #  define STATIC_ASSERT(x, msg) static_assert(x, msg) /* msvc is fucking retarded */
+#elif defined(__TINYC__)
+#  define STATIC_ASSERT(x, msg) typedef char static_assertion[(x)?(int)sizeof(msg):-1] 
 #else
 #  define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
 #endif /* _MSC_VER */

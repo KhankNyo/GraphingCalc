@@ -22,14 +22,8 @@ typedef enum reg_index
 static inline bool8 TargetEnv_x64_IsAVXSupported(void);
 
 
-#if defined(_MSC_VER) && !defined(__clang__) /* clang is real funny */
-/* fuck MSVC */
-#   if (defined(_M_IX86_FP) && _M_IX86_FP == 0) /* MSVC not supporting/enabling SSE */
-#       error("Compiler must support SSE.")
-#   endif /* _M_IX86_FP */
-
-#   include <intrin.h>
-#   include <immintrin.h>
+#if (defined(_MSC_VER) && !defined(__clang__) /* clang is real funny */)\
+|| (defined(_WIN32) && defined(__TINYC__)) /* tcc for windows */
 
 static inline void TargetEnv_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
 {
@@ -42,19 +36,14 @@ static inline void TargetEnv_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX,
 }
 
 #else /* non-msvc compiler targeting windows */
-#   if !defined(__SSE__)
-#       error("Compiler must support SSE.")
-#   endif /* __SSE__ */
-
 #   include <cpuid.h>
-#   include <x86intrin.h>
 
 static inline void TargetEnv_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
 {
     __get_cpuid(Feature, OutEAX, OutEBX, OutECX, OutEDX);
 }
 
-#endif /* _MSC_VER */
+#endif /* (_MSC_VER && !__clang__) || (_WIN32 && __TINYC__) */
 
 
 static inline bool8 TargetEnv_x64_IsAVXSupported(void)

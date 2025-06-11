@@ -2,8 +2,11 @@
 #define TARGET_ENV_H
 
 #include "JitCommon.h"
-STATIC_ASSERT(sizeof(float) == 4, "float must be 32 bit");
-STATIC_ASSERT(sizeof(double) == 8, "double must be 64 bit"); /* TODO: some compilers might use long double for 64 bit float */
+void TCC_STATIC_ASSERT_FN__(void)
+{
+    STATIC_ASSERT(sizeof(float) == 4, "float must be 32 bit");
+    STATIC_ASSERT(sizeof(double) == 8, "double must be 64 bit"); /* TODO: some compilers might use long double for 64 bit float */
+}
 
 /* common TargetEnv_* functions */
 static inline int TargetEnv_StackMaxAlignment(int StackSize);
