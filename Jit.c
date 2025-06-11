@@ -93,6 +93,14 @@ static const char *Get_OpName(jit_ir_op_type Op)
 }
 
 
+static jit_expression Jit_AllocateStackExpr(jit *Jit)
+{
+    return (jit_expression) {
+        .Storage = STORAGE_MEM,
+        .As.Mem = Storage_AllocateStack(&Jit->Storage),
+    };
+}
+
 
 
 static u8 *Jit_GetEmitterBuffer(jit *Jit)
@@ -149,6 +157,156 @@ static void Jit_Scratchpad_PopRight(jit *Jit, int DataSize)
     ASSERT(DataSize <= Jit->ScratchpadRightByteCount, "bad data size");
     Jit->ScratchpadRightByteCount -= DataSize;
 }
+
+
+
+
+typedef struct jit_ir_stack 
+{
+    jit *Jit;
+    int Count;
+} jit_ir_stack;
+
+static jit_ir_stack Ir_Stack_Init(jit *Jit)
+{
+    return (jit_ir_stack) {
+        .Jit = Jit,
+    };
+}
+
+static jit_expression *Ir_Stack_Top(jit_ir_stack *Stack, int Offset)
+{
+    ASSERT(Offset >= 0, "bad offset");
+    return (jit_expression *)Jit_Scratchpad_LeftPtr(Stack->Jit) - 1 - Offset;
+}
+
+static jit_expression *Ir_Stack_Push(jit_ir_stack *Stack, const jit_expression *Value)
+{
+    Stack->Count++;
+    jit_expression *Top = Jit_Scratchpad_PushLeft(Stack->Jit, sizeof(*Top));
+    *Top = *Value;
+    return Top;
+}
+
+static jit_expression *Ir_Stack_Pop(jit_ir_stack *Stack)
+{
+    ASSERT(Stack->Count != 0, "Cannot pop stack");
+    Stack->Count--;
+    jit_expression *Top = Ir_Stack_Top(Stack, 0);
+    Jit_Scratchpad_PopLeft(Stack->Jit, sizeof(jit_expression));
+    return Top;
+}
+
+static void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count)
+{
+    Jit_Scratchpad_PopLeft(Stack->Jit, Count*sizeof(jit_expression));
+}
+
+static void Ir_Stack_SpillReg(jit_ir_stack *Stack, jit *Jit)
+{
+    for (int i = 0; i < Stack->Count; i++)
+    {
+        jit_expression *Elem = Ir_Stack_Top(Stack, i);
+        switch (Elem->Storage)
+        {
+        case STORAGE_MEM: break; /* already in memory, nothing to do */
+        case STORAGE_REG:
+        {
+            jit_reg Src = Elem->As.Reg;
+            jit_expression Location = Jit_AllocateStackExpr(Jit);
+            Emit_Store(&Jit->Emitter, Src, Location.As.Mem.BaseReg, Location.As.Mem.Offset);
+            Storage_DeallocateReg(&Jit->Storage, Src);
+
+            *Elem = Location;
+        } break;
+        }
+    }
+}
+
+
+#if 0
+typedef struct jit_spill_stack 
+{
+    jit *Jit;
+} jit_spill_stack;
+
+static jit_spill_stack Ir_SpillStack_Init(jit *Jit)
+{
+    return (jit_spill_stack) {
+        .Jit = Jit,
+    };
+}
+
+static storage_spill_data *Ir_SpillStack_Top(jit_spill_stack *SpillStack, int Offset)
+{
+    ASSERT(Offset >= 0, "bad offset");
+    return (storage_spill_data *)Jit_Scratchpad_LeftPtr(SpillStack->Jit) - (1 + Offset);
+}
+
+static storage_spill_data *Ir_SpillStack_Push(jit_spill_stack *SpillStack, const storage_spill_data *Data)
+{
+    storage_spill_data *Top = Jit_Scratchpad_PushLeft(SpillStack->Jit, sizeof(*Top));
+    *Top = *Data;
+    return Top;
+}
+
+static storage_spill_data *Ir_SpillStack_Pop(jit_spill_stack *SpillStack)
+{
+    storage_spill_data *Top = Ir_SpillStack_Top(SpillStack, 0);
+    Jit_Scratchpad_PopLeft(SpillStack->Jit, sizeof(storage_spill_data));
+    return Top;
+}
+#endif
+
+typedef struct jit_fnref_stack
+{
+    jit *Jit;
+    int Base;
+} jit_fnref_stack;
+
+typedef struct jit_fnref 
+{
+    const jit_function *Function;
+    uint Location;
+} jit_fnref;
+
+static jit_fnref_stack Ir_FnRef_Init(jit *Jit)
+{
+    return (jit_fnref_stack) {
+        .Jit = Jit,
+        .Base = Jit->ScratchpadRightByteCount,
+    };
+}
+
+static jit_fnref *Ir_FnRef_Top(jit_fnref_stack *FnRef, int Offset)
+{
+    ASSERT(Offset >= 0, "bad offset");
+    return (jit_fnref *)Jit_Scratchpad_RightPtr(FnRef->Jit) + Offset;
+}
+
+static jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, uint CallLocation)
+{
+    jit_fnref *Top = Jit_Scratchpad_PushRight(FnRef->Jit, sizeof(*Top));
+    Top->Function = Function;
+    Top->Location = CallLocation;
+    return Top;
+}
+
+static jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef)
+{
+    jit_fnref *Top = Ir_FnRef_Top(FnRef, 0);
+    Jit_Scratchpad_PopRight(FnRef->Jit, sizeof(jit_fnref));
+    return Top;
+}
+
+static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
+{
+    return ABS(FnRef->Jit->ScratchpadRightByteCount - FnRef->Base) / sizeof(jit_fnref);
+}
+
+
+
+
 
 
 
@@ -386,8 +544,24 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
 
 
 
+static jit_expression Jit_AllocateRegExpr(jit *Jit, jit_ir_stack *Stack)
+{
+    jit_expression Expr = {
+        .Storage = STORAGE_REG,
+        .As.Reg = Storage_TryAllocateReg(&Jit->Storage),
+    };
+    if (JIT_REG_INVALID == Expr.As.Reg)
+    {
+        /* spill stack */
+        Ir_Stack_SpillReg(Stack, Jit);
+        Expr.As.Reg = Storage_TryAllocateReg(&Jit->Storage);
+        ASSERT(Expr.As.Reg != JIT_REG_INVALID, "unreachable");
+    }
+    return Expr;
+}
 
-static jit_reg Jit_ToReg(jit *Jit, const jit_expression *Expr)
+
+static jit_reg Jit_ToReg(jit *Jit, jit_ir_stack *Stack, const jit_expression *Expr)
 {
     jit_reg Result = -1;
     switch (Expr->Storage)
@@ -398,7 +572,7 @@ static jit_reg Jit_ToReg(jit *Jit, const jit_expression *Expr)
     } break;
     case STORAGE_MEM:
     {
-        Result = Storage_AllocateReg(&Jit->Storage).As.Reg;
+        Result = Jit_AllocateRegExpr(Jit, Stack).As.Reg;
         Emit_Load(&Jit->Emitter, Result, Expr->As.Mem.BaseReg, Expr->As.Mem.Offset);
     } break;
     }
@@ -673,10 +847,8 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
                 Ir_PushOpLoad(Jit, Left);
             if (Right != -1)
                 Ir_PushOpLoad(Jit, Right);
-            /* emit swap if Right operand was on stack first, 
-             * and operation is not commutative */
-            if (Left != -1 && -1 == Right
-            && !(Oper == TOK_PLUS || Oper == TOK_STAR))
+            /* emit swap if Right operand was in the data arary first */
+            if (Left != -1 && -1 == Right)
                 Ir_PushOp(Jit, IR_OP_SWAP);
 
             switch (Oper)
@@ -703,7 +875,8 @@ static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int Lo
     {
     case IR_DATA_CONST:
     {
-        Result = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
+        Result.Storage = STORAGE_MEM;
+        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
     } break;
     case IR_DATA_VAR_REF:
     {
@@ -726,133 +899,6 @@ static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int Lo
 }
 
 
-typedef struct jit_ir_stack 
-{
-    jit *Jit;
-    int Count;
-} jit_ir_stack;
-
-static jit_ir_stack Ir_Stack_Init(jit *Jit)
-{
-    return (jit_ir_stack) {
-        .Jit = Jit,
-    };
-}
-
-static jit_expression *Ir_Stack_Top(jit_ir_stack *Stack, int Offset)
-{
-    ASSERT(Offset >= 0, "bad offset");
-    return (jit_expression *)Jit_Scratchpad_LeftPtr(Stack->Jit) - 1 - Offset;
-}
-
-static jit_expression *Ir_Stack_Push(jit_ir_stack *Stack, const jit_expression *Value)
-{
-    Stack->Count++;
-    jit_expression *Top = Jit_Scratchpad_PushLeft(Stack->Jit, sizeof(*Top));
-    *Top = *Value;
-    return Top;
-}
-
-static jit_expression *Ir_Stack_Pop(jit_ir_stack *Stack)
-{
-    ASSERT(Stack->Count != 0, "Cannot pop stack");
-    Stack->Count--;
-    jit_expression *Top = Ir_Stack_Top(Stack, 0);
-    Jit_Scratchpad_PopLeft(Stack->Jit, sizeof(jit_expression));
-    return Top;
-}
-
-static void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count)
-{
-    Jit_Scratchpad_PopLeft(Stack->Jit, Count*sizeof(jit_expression));
-}
-
-static int Ir_Stack_Count(const jit_ir_stack *Stack)
-{
-    return Stack->Count;
-}
-
-
-typedef struct jit_spill_stack 
-{
-    jit *Jit;
-} jit_spill_stack;
-
-static jit_spill_stack Ir_SpillStack_Init(jit *Jit)
-{
-    return (jit_spill_stack) {
-        .Jit = Jit,
-    };
-}
-
-static storage_spill_data *Ir_SpillStack_Top(jit_spill_stack *SpillStack, int Offset)
-{
-    ASSERT(Offset >= 0, "bad offset");
-    return (storage_spill_data *)Jit_Scratchpad_LeftPtr(SpillStack->Jit) - (1 + Offset);
-}
-
-static storage_spill_data *Ir_SpillStack_Push(jit_spill_stack *SpillStack, const storage_spill_data *Data)
-{
-    storage_spill_data *Top = Jit_Scratchpad_PushLeft(SpillStack->Jit, sizeof(*Top));
-    *Top = *Data;
-    return Top;
-}
-
-static storage_spill_data *Ir_SpillStack_Pop(jit_spill_stack *SpillStack)
-{
-    storage_spill_data *Top = Ir_SpillStack_Top(SpillStack, 0);
-    Jit_Scratchpad_PopLeft(SpillStack->Jit, sizeof(storage_spill_data));
-    return Top;
-}
-
-typedef struct jit_fnref_stack
-{
-    jit *Jit;
-    int Base;
-} jit_fnref_stack;
-
-typedef struct jit_fnref 
-{
-    const jit_function *Function;
-    uint Location;
-} jit_fnref;
-
-static jit_fnref_stack Ir_FnRef_Init(jit *Jit)
-{
-    return (jit_fnref_stack) {
-        .Jit = Jit,
-        .Base = Jit->ScratchpadRightByteCount,
-    };
-}
-
-static jit_fnref *Ir_FnRef_Top(jit_fnref_stack *FnRef, int Offset)
-{
-    ASSERT(Offset >= 0, "bad offset");
-    return (jit_fnref *)Jit_Scratchpad_RightPtr(FnRef->Jit) + Offset;
-}
-
-static jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, uint CallLocation)
-{
-    jit_fnref *Top = Jit_Scratchpad_PushRight(FnRef->Jit, sizeof(*Top));
-    Top->Function = Function;
-    Top->Location = CallLocation;
-    return Top;
-}
-
-static jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef)
-{
-    jit_fnref *Top = Ir_FnRef_Top(FnRef, 0);
-    Jit_Scratchpad_PopRight(FnRef->Jit, sizeof(jit_fnref));
-    return Top;
-}
-
-static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
-{
-    return ABS(FnRef->Jit->ScratchpadRightByteCount - FnRef->Base) / sizeof(jit_fnref);
-}
-
-
-
 
 
 
@@ -862,7 +908,7 @@ static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
 static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
 {
     jit *Jit = Stack->Jit;
-    int IrStackCount = Ir_Stack_Count(Stack);
+    int IrStackCount = Stack->Count;
     ASSERT(ArgCount <= IrStackCount, "arg count");
 
     /* emit arguments */
@@ -879,7 +925,7 @@ static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
         } break;
         case STORAGE_MEM:
         {
-            jit_reg Tmp = Jit_ToReg(Jit, Expr);
+            jit_reg Tmp = Jit_ToReg(Jit, Stack, Expr);
             Emit_Store(&Jit->Emitter, Tmp, Arg.As.Mem.BaseReg, Arg.As.Mem.Offset);
             Storage_DeallocateReg(&Jit->Storage, Tmp);
         } break;
@@ -928,8 +974,6 @@ static void Jit_TranslateIr(jit *Jit)
 {
     jit_ir_stack Stack_ = Ir_Stack_Init(Jit);
     jit_ir_stack *Stack = &Stack_;
-    jit_spill_stack SpillStack_ = Ir_SpillStack_Init(Jit);
-    jit_spill_stack *SpillStack = &SpillStack_;
     jit_fnref_stack FnRef_ = Ir_FnRef_Init(Jit);
     jit_fnref_stack *FnRef = &FnRef_;
 
@@ -942,7 +986,7 @@ static void Jit_TranslateIr(jit *Jit)
         {
         case IR_OP_SWAP:
         {
-            ASSERT(Ir_Stack_Count(Stack) >= 2, "size");
+            ASSERT(Stack->Count >= 2, "size");
             /* swap */
             jit_expression *Left = Ir_Stack_Top(Stack, 0);
             jit_expression *Right = Ir_Stack_Top(Stack, 1);
@@ -963,7 +1007,7 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_STORE: /* store expr on stack to dst */
         {
-            jit_reg Src = Jit_ToReg(Jit, Ir_Stack_Pop(Stack));
+            jit_reg Src = Jit_ToReg(Jit, Stack, Ir_Stack_Pop(Stack));
             jit_mem Dst = Op->StoreDst;
             Emit_Store(&Jit->Emitter, Src, Dst.BaseReg, Dst.Offset);
             Storage_DeallocateReg(&Jit->Storage, Src);
@@ -1023,23 +1067,7 @@ static void Jit_TranslateIr(jit *Jit)
             }
 #else
             /* make all previous expr on the stack a memory location */
-            for (int i = 0; i < Stack->Count; i++)
-            {
-                jit_expression *Elem = Ir_Stack_Top(Stack, i);
-                switch (Elem->Storage)
-                {
-                case STORAGE_MEM: break; /* already in memory, nothing to do */
-                case STORAGE_REG:
-                {
-                    jit_reg Src = Elem->As.Reg;
-                    jit_expression Location = Storage_AllocateStack(&Jit->Storage);
-                    Emit_Store(&Jit->Emitter, Src, Location.As.Mem.BaseReg, Location.As.Mem.Offset);
-                    Storage_DeallocateReg(&Jit->Storage, Src);
-
-                    *Elem = Location;
-                } break;
-                }
-            }
+            Ir_Stack_SpillReg(Stack, Jit);
 #endif
         } break;
         case IR_OP_CALL:
@@ -1094,7 +1122,11 @@ static void Jit_TranslateIr(jit *Jit)
                 Result = Storage_ForceAllocateReg(&Jit->Storage, ReturnReg);
             }
 #else
-            jit_expression Result = Storage_ForceAllocateReg(&Jit->Storage, TargetEnv_GetReturnReg());
+            Storage_ForceAllocateReg(&Jit->Storage, TargetEnv_GetReturnReg());
+            jit_expression Result = {
+                .Storage = STORAGE_REG, 
+                .As.Reg = TargetEnv_GetReturnReg(),
+            };
 #endif
 
             /* push return value on the stack */
@@ -1107,9 +1139,17 @@ static void Jit_TranslateIr(jit *Jit)
         {
             jit_expression *Right = Ir_Stack_Pop(Stack);
             jit_expression *Left = Ir_Stack_Pop(Stack);
+
+            /* if commutative and right was in reg first, swap operands */
+            if ((IR_OP_ADD == Op->Type || IR_OP_MUL == Op->Type)
+            && STORAGE_REG == Right->Storage)
+            {
+                SWAP(jit_expression *, Left, Right);
+            }
+
             jit_expression Result = {
                 .Storage = STORAGE_REG,
-                .As.Reg = Jit_ToReg(Jit, Left),
+                .As.Reg = Jit_ToReg(Jit, Stack, Left),
             };
             if (Right->Storage == STORAGE_REG)
             {
@@ -1139,7 +1179,7 @@ static void Jit_TranslateIr(jit *Jit)
         {
             /* stack.top = 0 - stack.top */
             jit_expression *Value = Ir_Stack_Pop(Stack);
-            jit_expression Result = Storage_AllocateReg(&Jit->Storage);
+            jit_expression Result = Jit_AllocateRegExpr(Jit, Stack);
             Emit_LoadZero(&Jit->Emitter, Result.As.Reg);
             OP(Sub, Result.As.Reg, Value);
             Ir_Stack_Push(Stack, &Result);
@@ -1228,7 +1268,11 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
     {
         Ir_PushOpLoad(Jit, Index);
     }
-    jit_expression Global = Storage_AllocateGlobal(&Jit->Storage);
+
+    jit_expression Global = {
+        .Storage = STORAGE_MEM,
+        .As.Mem = Storage_AllocateGlobal(&Jit->Storage),
+    };
     Ir_PushOp(Jit, IR_OP_STORE)->StoreDst = Global.As.Mem;
     Variable->Expr = Global;
 }

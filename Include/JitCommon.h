@@ -3,6 +3,8 @@
 
 #include "Common.h"
 
+#define JIT_REG_INVALID -1
+typedef i8 jit_reg;
 typedef struct jit_token jit_token;
 typedef struct jit_expression jit_expression;
 typedef struct jit_function_parameter jit_function_parameter;
@@ -42,7 +44,6 @@ typedef enum jit_token_type
     TOK_EOF,
 } jit_token_type;
 
-typedef i8 jit_reg;
 typedef struct jit_mem 
 {
     i32 Offset;
