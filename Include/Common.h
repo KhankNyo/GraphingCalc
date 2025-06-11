@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <assert.h>
 
-#ifdef _MSC_VER
-#  define STATIC_ASSERT(x, msg) static_assert(x, msg)
+#if defined(_MSC_VER)
+#  define STATIC_ASSERT(x, msg) static_assert(x, msg) /* msvc is fucking retarded */
 #else
 #  define STATIC_ASSERT(x, msg) _Static_assert(x, msg)
 #endif /* _MSC_VER */

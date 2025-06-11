@@ -70,8 +70,8 @@ static inline bool8 TargetEnv_x64_IsAVXSupported(void)
 /* ms x64 calling conv */
 static inline int TargetEnv_StackMaxAlignment(int StackSize)
 {
-    if (StackSize % sizeof(max_align_t))
-        return ROUND_UP_TO_MULTIPLE(StackSize, sizeof(max_align_t));
+    if (StackSize % 16)
+        return ROUND_UP_TO_MULTIPLE(StackSize, 16);
     return StackSize;
 }
 static inline int TargetEnv_StackMinAlignment(int StackSize)

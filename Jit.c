@@ -698,11 +698,12 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
 
 static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int LocalScopeBase, int LocalScopeVarCount)
 {
+    jit_expression Result = { 0 };
     switch (Data->Type)
     {
     case IR_DATA_CONST:
     {
-        return Storage_AllocateConst(&Jit->Storage, Data->As.Const);
+        Result = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
     } break;
     case IR_DATA_VAR_REF:
     {
@@ -710,16 +711,18 @@ static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int Lo
         if (!Entry)
         {
             Error_AtToken(&Jit->Error, &Data->As.VarRef, "Undefined variable.");
-            return (jit_expression) { 0 };
         }
-        return Entry->Expr;
+        else
+        {
+            Result = Entry->Expr;
+        }
     } break;
     case IR_DATA_VAR_DEF:
     {
-        return Data->As.VarDef.Expr;
+        Result = Data->As.VarDef.Expr;
     } break;
     }
-    UNREACHABLE();
+    return Result;
 }
 
 
