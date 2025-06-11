@@ -325,6 +325,14 @@ uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
     return Location;
 }
 
+void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation)
+{
+    ASSERT(FunctionLocation < Emitter->Base.BufferSize, "bad dst location");
+    ASSERT(CallLocation + 5 <  Emitter->Base.BufferSize, "bad src location");
+    i32 Offset = FunctionLocation - (CallLocation + 5);
+    MemCpy(Emitter->Base.Buffer + CallLocation + 1, &Offset, 4);
+}
+
 
 #define PEEK(p_dd, offset) ((p_dd)->InstructionSize + (offset) < (p_dd)->MemoryCapacity\
     ? (p_dd)->Memory[(p_dd)->InstructionSize + (offset)]\

@@ -59,6 +59,7 @@ uint Emit_FunctionEntry(jit_emitter *);
 void Emit_FunctionAllocateStack(jit_emitter *Emitter, i32 StackSize);
 void Emit_FunctionExit(jit_emitter *Emitter);
 uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
+void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation);
 
 
 /* TARGETENV_<platform name> must be defined via compilation flags */

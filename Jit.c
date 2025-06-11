@@ -531,7 +531,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
     case TOK_MINUS: /* negate */
     {
         DataIndex = Jit_ParseUnary(Jit, AllowForwardReference);
-        /* negate on eval stack */
+        /* negate on ir stack */
         if (-1 == DataIndex)
         {
             Ir_PushOp(Jit, IR_OP_NEG);
@@ -544,7 +544,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         {
             Data->As.Const = -Data->As.Const;
         }
-        /* negate on data stack */
+        /* value is not a const, load it onto the ir stack and negate it */
         else
         {
             Ir_PushOpLoad(Jit, DataIndex);
@@ -593,6 +593,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
             Op->Call.FnName = Token;
 
             /* no data index, result on ir stack */
+            DataIndex = -1;
         }
         /* variable reference */
         else
@@ -665,15 +666,17 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
             Left = Ir_GetDataCount(Jit) - 1;
 #undef CONST
         }
-        /* data evaluation is deferred to run time */
+        /* data evaluation is deferred to run time (ir stack) */
         else 
         {
             if (Left != -1)
                 Ir_PushOpLoad(Jit, Left);
             if (Right != -1)
                 Ir_PushOpLoad(Jit, Right);
-            /* Right operand was on stack first */
-            if (Left != -1 && -1 == Right)
+            /* emit swap if Right operand was on stack first, 
+             * and operation is not commutative */
+            if (Left != -1 && -1 == Right
+            && !(Oper == TOK_PLUS || Oper == TOK_STAR))
                 Ir_PushOp(Jit, IR_OP_SWAP);
 
             switch (Oper)
@@ -797,13 +800,61 @@ static storage_spill_data *Ir_SpillStack_Pop(jit_spill_stack *SpillStack)
     return Top;
 }
 
+typedef struct jit_fnref_stack
+{
+    jit *Jit;
+    int Base;
+} jit_fnref_stack;
+
+typedef struct jit_fnref 
+{
+    def_table_entry *Entry;
+    uint Location;
+} jit_fnref;
+
+static jit_fnref_stack Ir_FnRef_Init(jit *Jit)
+{
+    return (jit_fnref_stack) {
+        .Jit = Jit,
+        .Base = Jit->ScratchpadRightByteCount,
+    };
+}
+
+static jit_fnref *Ir_FnRef_Top(jit_fnref_stack *FnRef, int Offset)
+{
+    ASSERT(Offset >= 0, "bad offset");
+    return (jit_fnref *)Jit_Scratchpad_RightPtr(FnRef->Jit) + Offset;
+}
+
+static jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, def_table_entry *Entry, uint CallLocation)
+{
+    jit_fnref *Top = Jit_Scratchpad_PushRight(FnRef->Jit, sizeof(*Top));
+    Top->Entry = Entry;
+    Top->Location = CallLocation;
+    return Top;
+}
+
+static jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef)
+{
+    jit_fnref *Top = Ir_FnRef_Top(FnRef, 0);
+    Jit_Scratchpad_PopRight(FnRef->Jit, sizeof(jit_fnref));
+    return Top;
+}
+
+static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
+{
+    return ABS(FnRef->Jit->ScratchpadRightByteCount - FnRef->Base) / sizeof(jit_fnref);
+}
 
 
 
 
 
 
-static bool8 Jit_EmitOpCall(jit_ir_stack *Stack, jit_function *Function, int ArgCount)
+
+
+
+static bool8 Jit_EmitOpCall(jit_ir_stack *Stack, int ArgCount)
 {
     jit *Jit = Stack->Jit;
     int IrStackCount = Ir_Stack_Count(Stack);
@@ -832,7 +883,7 @@ static bool8 Jit_EmitOpCall(jit_ir_stack *Stack, jit_function *Function, int Arg
     Ir_Stack_PopMultiple(Stack, ArgCount);
 
     /* emit call */
-    return Emit_Call(&Jit->Emitter, Function->Dbg.Location);
+    return Emit_Call(&Jit->Emitter, 0);
 }
 
 static void PrintVars(jit *Jit, int Start, int Count)
@@ -858,6 +909,8 @@ static void Jit_TranslateIr(jit *Jit)
     jit_ir_stack *Stack = &Stack_;
     jit_spill_stack SpillStack_ = Ir_SpillStack_Init(Jit);
     jit_spill_stack *SpillStack = &SpillStack_;
+    jit_fnref_stack FnRef_ = Ir_FnRef_Init(Jit);
+    jit_fnref_stack *FnRef = &FnRef_;
 
     int IrOpCount = Ir_GetOpCount(Jit);
     jit_function *Fn = NULL;
@@ -949,7 +1002,8 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_CALL:
         {
-            def_table_entry *Entry = DefTable_Find(&Jit->Global, Op->Call.FnName.Str.Ptr, Op->Call.FnName.Str.Len);
+            /* TODO: check arg count */
+            def_table_entry *Entry = DefTable_Find(&Jit->Global, Op->Call.FnName.Str.Ptr, Op->Call.FnName.Str.Len, TYPE_FUNCTION);
             if (!Entry) /* undefined function */
             {
                 Error_AtToken(&Jit->Error, &Op->Call.FnName, "Undefined function");
@@ -957,19 +1011,18 @@ static void Jit_TranslateIr(jit *Jit)
             }
 
             jit_function *Function = &Entry->As.Function;
-            uint CallLocation = Jit_EmitOpCall(Stack, &Function, Function->Location);
+            uint CallLocation = Jit_EmitOpCall(Stack, Function->ParamCount);
             if (FN_LOCATION_UNDEFINED == Function->Dbg.Location)
             {
-                Ir_UndefinedFnRef_Push(Jit, CallLocation, Entry, Op->Call.ArgCount);
+                Ir_FnRef_Push(FnRef, Entry, CallLocation);
             }
 
-            /* NOTE: very important to unspill before pushing return value, because the IrStack and the spill stack 
-             * are both pushed and popped from the left of the jit's scratchpad */
-            /* unspill spilled registers */
-            storage_spill_data *Spilled = Ir_SpillStack_Pop(SpillStack);
             bool8 UsingReturnReg = true;
             jit_reg ReturnReg = TargetEnv_GetReturnReg();
             jit_expression Result;
+            /* NOTE: very important to unspill before pushing return value, because the IrStack and the spill stack 
+             * are both pushed and popped from the left of the jit's scratchpad */
+            storage_spill_data *Spilled = Ir_SpillStack_Pop(SpillStack);
             Storage_Unspill(&Jit->Storage, Spilled);
             for (int i = 0; i < Spilled->Count; i++)
             {
@@ -1040,6 +1093,20 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         }
 #undef OP
+    }
+
+    int FunctionCallCount = Ir_FnRef_Count(FnRef);
+    for (int i = 0; i < FunctionCallCount; i++)
+    {
+        jit_fnref *Ref = Ir_FnRef_Pop(FnRef);
+        ASSERT(Ref->Entry, "unreachable");
+        printf("Patching: %d -- %08x   call %.*s (%08x)\n", 
+            i, 
+            Ref->Location, 
+            Ref->Entry->As.Common.Str.Len, Ref->Entry->As.Common.Str.Ptr,
+            Ref->Entry->As.Function.Dbg.Location
+        );
+        Emitter_PatchCall(&Jit->Emitter, Ref->Location, Ref->Entry->As.Function.Dbg.Location);
     }
 }
 
