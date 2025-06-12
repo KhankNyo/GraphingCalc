@@ -38,32 +38,27 @@ typedef enum jit_ir_op_type
     IR_OP_VAR_BEGIN,        
     IR_OP_VAR_END,          
 } jit_ir_op_type;
-#if 0
-typedef struct jit_ir_data 
-{
-    jit_ir_data_type Type;
-    union {
-        double Const;
-        jit_token VarRef;
-        struct {
-            strview Name;
-            jit_location Location;
-        } Param;
-    } As;
-} jit_ir_data;
-#else
+
 typedef struct jit_ir_data_param
 {
-    strview Name; 
+    const char *Str;
+    i32 StrLen;
     i32 Index;
 } jit_ir_data_param;
+typedef struct jit_token_skinny
+{
+    const char *Str;
+    i32 StrLen;
+    jit_token_type Type;
+    i32 Line; 
+    i32 Offset;
+} jit_token_skinny;
 typedef enum jit_ir_data_type 
 {
     IR_DATA_CONST  = sizeof(double),                    /* Const(double)                   + Tag(1) */
-    IR_DATA_VARREF = sizeof(jit_token),                 /* Name(jit_token)                 + Tag(1) */
+    IR_DATA_VARREF = sizeof(jit_token_skinny),          /* Name(jit_token_skinny)          + Tag(1) */
     IR_DATA_PARAM  = sizeof(jit_ir_data_param),         /* Name(strview) + ParamIndex(i32) + Tag(1) */
 } jit_ir_data_type;
-#endif
 #define FN_LOCATION_UNDEFINED -1
 
 
@@ -671,16 +666,10 @@ static inline void Ir_Data_SetPayload(u8 *Data, const void *Payload)
 /* returns pointer to payload space */
 static u8 *Ir_Data_PushReserveSize(jit *Jit, jit_ir_data_type Type)
 {
-#if 0
-    jit_ir_data *Data = Jit_Scratchpad_PushRight(Jit, sizeof(jit_ir_data));
-    Data->Type = Type;
-    return Data;
-#else
     Jit->IrDataByteCount += Type + 1;
     u8 *Ptr = Jit_Scratchpad_PushRight(Jit, Type + 1);
     *(Ptr + Type) = Type;
     return Ptr;
-#endif
 }
 
 static void Ir_PopData(jit *Jit)
@@ -703,7 +692,15 @@ static int Ir_Data_PushRef(jit *Jit, const jit_token *VarName)
 {
     int Count = Ir_Data_GetCount(Jit);
     u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_VARREF);
-    MemCpy(Ptr, VarName, sizeof(*VarName));
+
+    jit_token_skinny Token = {
+        .Str = VarName->Str.Ptr,
+        .StrLen = VarName->Str.Len,
+        .Line = VarName->Line,
+        .Offset = VarName->Offset,
+        .Type = VarName->Type,
+    };
+    MemCpy(Ptr, &Token, sizeof(Token));
     return Count;
 }
 
@@ -712,7 +709,8 @@ static int Ir_Data_PushParam(jit *Jit, strview VarName, i32 ParamIndex)
     int Count = Ir_Data_GetCount(Jit);
     u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_PARAM);
     jit_ir_data_param Param = {
-        .Name = VarName,
+        .Str = VarName.Ptr,
+        .StrLen = VarName.Len,
         .Index = ParamIndex,
     };
     MemCpy(Ptr, &Param, sizeof Param);
@@ -733,13 +731,10 @@ static jit_location Jit_GetParamLocation(const jit *Jit, const u8 *Data)
 
 static bool8 Jit_FindVariable(
     jit *Jit, 
-    strview VarName, 
+    const char *Str, int Len,
     int LocalScopeBase, int LocalScopeVarCount, 
     jit_location *VarLocation)
 {
-    const char *Ptr = VarName.Ptr;
-    int Len = VarName.Len;
-
     /* search local scope if provided */
     i32 DataOffset = LocalScopeBase;
     for (int i = 0; i < LocalScopeVarCount; i++)
@@ -750,8 +745,8 @@ static bool8 Jit_FindVariable(
         jit_ir_data_param Param; 
         Ir_Data_GetPayload(Data, &Param);
 
-        if (Len == Param.Name.Len
-        && StrEqu(Ptr, Param.Name.Ptr, Len))
+        if (Len == Param.StrLen
+        && StrEqu(Str, Param.Str, Len))
         {
             if (NULL != VarLocation)
             {
@@ -764,7 +759,7 @@ static bool8 Jit_FindVariable(
     }
 
     /* failed local scope search, switch to global */
-    def_table_entry *Entry = DefTable_Find(&Jit->Global, Ptr, Len, TYPE_VARIABLE);
+    def_table_entry *Entry = DefTable_Find(&Jit->Global, Str, Len, TYPE_VARIABLE);
     if (NULL == Entry)
     {
         return false;
@@ -856,7 +851,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         else
         {
             if (!AllowForwardReference
-            && !Jit_FindVariable(Jit, Token.Str, 0, 0, NULL))
+            && !Jit_FindVariable(Jit, Token.Str.Ptr, Token.Str.Len, 0, 0, NULL))
             {
                 Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
                 break;
@@ -968,11 +963,11 @@ static jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScop
     } break;
     case IR_DATA_VARREF:
     {
-        jit_token Name;
+        jit_token_skinny Name;
         Ir_Data_GetPayload(Data, &Name);
-        if (!Jit_FindVariable(Jit, Name.Str, LocalScopeBase, LocalScopeVarCount, &Result))
+        if (!Jit_FindVariable(Jit, Name.Str, Name.StrLen, LocalScopeBase, LocalScopeVarCount, &Result))
         {
-            Error_AtToken(&Jit->Error, &Name, "Undefined variable.");
+            Error_AtStr(&Jit->Error, Name.Str, Name.StrLen, Name.Line, Name.Offset, "Undefined variable.");
         }
         ASSERT(Result.Storage == STORAGE_MEM, "unreachable");
     } break;
@@ -1098,9 +1093,6 @@ static u8 *Jit_Ir_TranslateSingle(
             /* set parameters to valid location */
             for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
             {
-                //int Index = Fn->ParamStart + i;
-                //jit_ir_data *Data = Ir_Data_Get(Jit, Index);
-                //ASSERT(Data->Type == IR_DATA_PARAM, "unreachable");
                 jit_mem NonVolatileParam = TargetEnv_GetParam(i, Jit->Storage.DataSize);
                 jit_reg VolatileParam = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
                 Emit_Store(&Jit->Emitter, 
@@ -1589,15 +1581,15 @@ static void PrintVars(jit *Jit)
         } break;
         case IR_DATA_VARREF: 
         {
-            jit_token VarRef;
+            jit_token_skinny VarRef;
             Ir_Data_GetPayload(Data, &VarRef);
-            printf("VarRef %d = '%.*s'\n", i, VarRef.Str.Len, VarRef.Str.Ptr);
+            printf("VarRef %d = '%.*s'\n", i, VarRef.StrLen, VarRef.Str);
         } break;
         case IR_DATA_PARAM:  
         {
             jit_ir_data_param Param;
             Ir_Data_GetPayload(Data, &Param);
-            printf("Param %d = '%.*s', %d\n", i, Param.Name.Len, Param.Name.Ptr, Param.Index);
+            printf("Param %d = '%.*s', %d\n", i, Param.StrLen, Param.Str, Param.Index);
         } break;
         default: UNREACHABLE(); break;
         }

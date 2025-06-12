@@ -8,7 +8,7 @@ if "clean"=="%1" (
 
     if not exist bin\ MKDIR bin
     PUSHD bin
-        cl /Od /source-charset:utf-8 /Zi -I..\Include                   ^
+        cl /O2 /source-charset:utf-8 /Zi -I..\Include                   ^
             /DTARGETENV_X64_WINDOWS                                     ^
             ..\x64_Windows_Build.c /FeGraph.exe gdi32.lib user32.lib    ^
             /link /subsystem:console /stack:0x1000000
