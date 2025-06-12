@@ -17,7 +17,7 @@
 
 typedef struct disasm_data
 {
-    u8 *Memory;
+    const u8 *Memory;
     char *DisasmBuffer;
 
     int MemoryCapacity;
@@ -286,33 +286,31 @@ uint Emit_FunctionEntry(jit_emitter *Emitter)
         0x50 + RBP,                     /* push rbp */
         0x48, 0x89, MODRM(3, RSP, RBP)  /* mov rbp, rsp */
     );
+    Emit(Emitter, 3 + 4, 
+        0x48, 0x81, MODRM(3, 5, RSP),   /* sub rsp, i32 */
+        0, 0, 0, 0
+    );
     return Location;
 }
 
-void Emit_FunctionAllocateStack(jit_emitter *Emitter, i32 StackSize)
-{
-    if (IN_RANGE(INT8_MIN, StackSize, INT8_MAX))
-    {
-        Emit(Emitter, 3, 
-            0x48, 0x83, MODRM(3, 5, RSP) /* sub rsp, imm8 */
-        );
-        EmitArray(Emitter, (u8 *)&StackSize, 1);
-    }
-    else
-    {
-        Emit(Emitter, 3, 
-            0x48, 0x81, MODRM(3, 5, RSP) /* sub rsp, imm32 */
-        );
-        EmitArray(Emitter, (u8 *)&StackSize, 1);
-    }
-}
 
-void Emit_FunctionExit(jit_emitter *Emitter)
+void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
 {
+    uint PrologueSize = 1 + 3 + 3 + 4;
+    ASSERT(Location + PrologueSize <= Emitter->Base.BufferSize, "invalid location");
+
     /* leave 
      * ret 
      */
     Emit(Emitter, 2, 0xC9, 0xC3);
+
+    /* patch stack size */
+    uint StackSizeLocation = Location + 1 + 3 + 3;
+    MemCpy(
+        Emitter->Base.Buffer + StackSizeLocation,
+        &StackSize, 
+        sizeof StackSize
+    );
 }
 
 
@@ -464,7 +462,7 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type, const char
 }
 
 
-uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64])
+uint DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64])
 {
     ASSERT(MemorySize > 0, "bad memory size");
     disasm_data Disasm = {

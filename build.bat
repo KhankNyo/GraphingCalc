@@ -19,7 +19,7 @@ SETLOCAL EnableDelayedExpansion
     if not exist bin\ MKDIR bin
 
     SET COMPILE_OPT= ^
-        -O0 -march=native -ggdb -Wall -Wextra -Wpedantic -IInclude  ^
+        -O3 -march=native -ggdb -Wall -Wextra -Wpedantic -IInclude  ^
         -DTARGETENV_X64_WINDOWS                                     ^
         x64_Windows_Build.c -o bin\Graph.exe                        ^
         -lgdi32 -luser32 -lkernel32 -Wl,--stack,0x1000000"

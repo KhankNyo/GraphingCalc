@@ -24,8 +24,6 @@ typedef struct jit_result
     def_table_entry *GlobalSymbol;
 } jit_result;
 
-typedef struct jit_ir_compiler jit_ir_compiler;
-
 typedef struct jit 
 {
     jit_compilation_flags Flags;
@@ -38,8 +36,8 @@ typedef struct jit
     def_table Global;
     jit_token Curr, Next;
 
-    jit_ir_op *IrOp;
-    jit_ir_data *IrData;
+    struct jit_ir_op *IrOp;
+    struct jit_ir_data *IrData;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;

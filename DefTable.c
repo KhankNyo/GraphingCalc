@@ -2,9 +2,9 @@
 #include "DefTable.h"
 
 
-#define EMPTY(p_e) (NULL == (p_e)->As.Common.Str.Ptr)
-#define DELETED(p_e) (0 == (p_e)->As.Common.Str.Len)
-#define TableCapacity(p_t) (uint)(p_t)->Capacity
+#define EMPTY(p_e) (NULL == (p_e)->As.Str.Ptr)
+#define DELETED(p_e) (0 == (p_e)->As.Str.Len)
+#define TABLE_CAPACITY(p_t) (uint)(p_t)->Capacity
 #define DefTable_Hash(s, l) (Table->HashFn(s, l))
 
 
@@ -15,7 +15,7 @@ static def_table_entry *GetArray(def_table *Table)
 
 static u32 NextIndex(const def_table *Table, u32 i)
 {
-    return (i + 1) & (TableCapacity(Table) - 1);
+    return (i + 1) & (TABLE_CAPACITY(Table) - 1);
 }
 
 
@@ -47,12 +47,12 @@ void DefTable_Reset(def_table *Table)
 
 def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, def_table_entry_type Type)
 {
-    if (Table->Count == TableCapacity(Table))
+    if (Table->Count == TABLE_CAPACITY(Table))
         return NULL; /* table is full */
 
     def_table_entry *Array = GetArray(Table);
     u32 Hash = DefTable_Hash(Str, StrLen);
-    u32 Index = Hash & (TableCapacity(Table) - 1);
+    u32 Index = Hash & (TABLE_CAPACITY(Table) - 1);
     while (1)
     {
         def_table_entry *Entry = &Array[Index];
@@ -61,7 +61,7 @@ def_table_entry *DefTable_Define(def_table *Table, const char *Str, int StrLen, 
             *Entry = (def_table_entry) {
                 .Type = Type,
                 .Hash = Hash,
-                .As.Common.Str = {
+                .As.Str = {
                     .Ptr = Str,
                     .Len = StrLen,
                 },
@@ -90,8 +90,8 @@ def_table_entry *DefTable_Find(def_table *Table, const char *Str, int StrLen, de
 {
     def_table_entry *Array = GetArray(Table);
     u32 Hash = DefTable_Hash(Str, StrLen);
-    u32 Index = Hash & (TableCapacity(Table) - 1);
-    for (uint i = 0; i < TableCapacity(Table); i++)
+    u32 Index = Hash & (TABLE_CAPACITY(Table) - 1);
+    for (uint i = 0; i < TABLE_CAPACITY(Table); i++)
     {
         def_table_entry *Entry = &Array[Index];
         if (EMPTY(Entry))
@@ -102,8 +102,8 @@ def_table_entry *DefTable_Find(def_table *Table, const char *Str, int StrLen, de
         }
         else if (Hash == Entry->Hash 
         && Type == Entry->Type
-        && StrLen == Entry->As.Common.Str.Len 
-        && StrEqu(Str, Entry->As.Common.Str.Ptr, StrLen))
+        && StrLen == Entry->As.Str.Len 
+        && StrEqu(Str, Entry->As.Str.Ptr, StrLen))
         {
             /* found entry */
             return Entry;
@@ -133,7 +133,8 @@ bool8 DefTable_Delete(def_table *Table, const char *Str, int StrLen, def_table_e
     Entry->Next = NULL;
     Entry->Prev = NULL;
 
-    Entry->As.Common.Str.Len = 0;
+    /* mark as deleted */
+    Entry->As.Str.Len = 0;
     return true;
 }
 

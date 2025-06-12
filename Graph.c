@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #include "Common.h"
-#include "Include/Platform.h"
+#include "Platform.h"
 #include "Platform.h"
 #include "Jit.h"
 
@@ -459,10 +459,10 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-        "h(x) = g(g(f(x), f(f(x)), 0, 0, 0)*f(f(f((x)))), 0, 0, 0, 0)\n"
-        "g(a, b, c, d, e) = a + b + c + d + e\n"
-        "f(x) = x\n"
-        "k(x, y) = f(f(x*y)*f(x*y))*f(f(x*y)*f(x*y))\n"
+        "f(x) = g(g(x))*h(x*1) + k(1, 2, 3, x, 4, 5, 6)\n"
+        "g(x) = x\n"
+        "h(x) = x*x\n"
+        "k(a, b, c, d, e, f, g) = 1\n"
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)

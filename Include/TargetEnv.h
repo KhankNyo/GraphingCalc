@@ -19,7 +19,7 @@ static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex);
 static inline bool8 TargetEnv_CallerShouldSave(int Reg);
 static inline int TargetEnv_GetReturnReg(void);
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
-static inline jit_expression TargetEnv_GetArg(int Index, int DataSize);
+static inline jit_location TargetEnv_GetArg(int Index, int DataSize);
 static inline jit_mem TargetEnv_GetParam(int Index, int DataSize);
 
 
@@ -38,7 +38,7 @@ typedef struct jit_generic_emitter
 } jit_generic_emitter;
 
 /* common emitter functions */
-uint DisasmSingleInstruction(u64 Addr, u8 *Memory, int MemorySize, char ResultBuffer[64]);
+uint DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64]);
 
 void Emitter_Init(jit_emitter *TargetEnvEmitter, u8 *Buffer, uint BufferCapacity);
 void Emitter_Reset(jit_emitter *TargetEnvEmitter, bool8 EmitFloat32Instructions);
@@ -59,8 +59,7 @@ void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
 
 /* returns the function's location */
 uint Emit_FunctionEntry(jit_emitter *);
-void Emit_FunctionAllocateStack(jit_emitter *Emitter, i32 StackSize);
-void Emit_FunctionExit(jit_emitter *Emitter);
+void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize);
 uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
 void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation);
 

@@ -5,20 +5,7 @@
 
 #define JIT_REG_INVALID -1
 typedef i8 jit_reg;
-typedef struct jit_token jit_token;
-typedef struct jit_expression jit_expression;
-typedef struct jit_function_parameter jit_function_parameter;
-typedef struct jit_variable jit_variable;
-typedef struct jit_function jit_function;
-typedef struct jit_debug_info jit_debug_info;
-typedef struct jit_ir_op jit_ir_op;
-typedef struct jit_ir_data jit_ir_data;
 
-typedef enum jit_storage_type 
-{
-    STORAGE_MEM = 0,
-    STORAGE_REG,
-} jit_storage_type;
 
 typedef enum jit_token_type 
 {
@@ -44,41 +31,42 @@ typedef enum jit_token_type
     TOK_EOF,
 } jit_token_type;
 
+typedef enum jit_storage_type 
+{
+    STORAGE_MEM = 0,
+    STORAGE_REG,
+} jit_storage_type;
+
 typedef struct jit_mem 
 {
     i32 Offset;
     jit_reg BaseReg;
 } jit_mem;
-struct jit_expression
+typedef struct jit_location
 {
     jit_storage_type Storage;
     union {
         jit_mem Mem;
         jit_reg Reg;
     } As;
-};
+} jit_location;
 
-struct jit_debug_info 
+typedef struct jit_variable
 {
-    strview Str;
-    int Location;
-    int ByteCount;
-};
+    strview Name;
+    int InsLocation, InsByteCount;
+    jit_location Location;
+} jit_variable;
 
-struct jit_variable
+typedef struct jit_function 
 {
-    jit_debug_info Dbg;
-    jit_expression Expr;
-};
-
-struct jit_function 
-{
-    jit_debug_info Dbg;
+    strview Name;
+    int Location, InsByteCount;
     int ParamStart;
     int ParamCount;
-};
+} jit_function;
 
-struct jit_token 
+typedef struct jit_token 
 {
     strview Str;
     int Offset, Line;
@@ -88,7 +76,7 @@ struct jit_token
         double Number;
         const char *ErrMsg;
     } As;
-};
+} jit_token;
 
 
 #endif /* JIT_COMMON_H */

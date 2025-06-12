@@ -34,8 +34,8 @@ void Storage_PushScope(jit_storage_manager *S)
 {
     ASSERT(S->Scope < (int)STATIC_ARRAY_SIZE(S->StackSize), "invalid scope count");
     S->Scope++;
-    CURR_SCOPE(S->StackSize) = TargetEnv_GetShadowSpaceSize(); /* shadow space */
-    CURR_SCOPE(S->MaxStackSize) = CURR_SCOPE(S->StackSize);
+    CURR_SCOPE(S->StackSize) = 0; 
+    CURR_SCOPE(S->MaxStackSize) = TargetEnv_GetShadowSpaceSize();
     CURR_SCOPE(S->BusyRegCount) = 0;
     memset(CURR_SCOPE(S->RegIsBusy), 0, TARGETENV_REG_COUNT);
 }

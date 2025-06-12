@@ -18,13 +18,13 @@ struct def_table_entry
 {
     u32 Hash;
     def_table_entry_type Type;
+    def_table_entry *Next, *Prev;
 
     union {
-        jit_debug_info Common;
+        strview Str;
         jit_function Function;
         jit_variable Variable;
     } As;
-    def_table_entry *Next, *Prev;
 };
 
 struct def_table 

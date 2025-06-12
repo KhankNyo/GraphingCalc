@@ -108,12 +108,12 @@ static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex)
 {
     return ArgIndex < TargetEnv_GetArgRegCount();
 }
-static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
+static inline jit_location TargetEnv_GetArg(int Index, int DataSize)
 {
     (void)DataSize;
     if (TargetEnv_IsArgumentInReg(Index))
     {
-        jit_expression Reg = {
+        jit_location Reg = {
             .Storage = STORAGE_REG,
             .As.Reg = Index + 1,
         };
@@ -121,7 +121,7 @@ static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
     }
     else
     {
-        jit_expression Mem = {
+        jit_location Mem = {
             .Storage = STORAGE_MEM,
             .As.Mem = {
                 .BaseReg = RSP,
