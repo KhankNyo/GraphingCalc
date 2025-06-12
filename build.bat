@@ -1,5 +1,4 @@
 @echo off
-SETLOCAL EnableDelayedExpansion
 
 if "clean"=="%1" (
     if exist bin\ RMDIR /q /s bin
@@ -16,6 +15,7 @@ if "clean"=="%1" (
     POPD
 
 ) else (
+SETLOCAL EnableDelayedExpansion
     if not exist bin\ MKDIR bin
 
     SET COMPILE_OPT= ^
