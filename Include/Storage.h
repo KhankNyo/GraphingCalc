@@ -9,11 +9,10 @@ typedef struct jit_storage_manager
 {
     int DataSize;
 
-    int Scope;
-    int MaxStackSize[2];
-    int StackSize[2];
-    int BusyRegCount[2];
-    bool8 RegIsBusy[2][TARGETENV_REG_COUNT];
+    int MaxStackSize;
+    int StackSize;
+    int BusyRegCount;
+    bool8 RegIsBusy[TARGETENV_REG_COUNT];
 
     void *GlobalMemory;
     uint GlobalCapacity;
@@ -23,10 +22,9 @@ typedef struct jit_storage_manager
 /* reset must be called to set data size after init */
 jit_storage_manager Storage_Init(void *GlobalMemory, uint GlobalCapacityBytes);
 void Storage_Reset(jit_storage_manager *S, int DataSize);
-void Storage_PushScope(jit_storage_manager *S);
-void Storage_PopScope(jit_storage_manager *S);
 
 void Storage_ForceAllocateReg(jit_storage_manager *S, jit_reg Reg);
+/* returns JIT_REG_INVALID if a register could not be allocated */
 jit_reg Storage_TryAllocateReg(jit_storage_manager *S);
 jit_mem Storage_AllocateStack(jit_storage_manager *S);
 jit_mem Storage_AllocateGlobal(jit_storage_manager *S);
