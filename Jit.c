@@ -38,12 +38,7 @@ typedef enum jit_ir_op_type
     IR_OP_VAR_BEGIN,        
     IR_OP_VAR_END,          
 } jit_ir_op_type;
-typedef enum jit_ir_data_type 
-{
-    IR_DATA_CONST,
-    IR_DATA_VAR_REF,
-    IR_DATA_PARAM,
-} jit_ir_data_type;
+#if 0
 typedef struct jit_ir_data 
 {
     jit_ir_data_type Type;
@@ -56,6 +51,19 @@ typedef struct jit_ir_data
         } Param;
     } As;
 } jit_ir_data;
+#else
+typedef struct jit_ir_data_param
+{
+    strview Name; 
+    i32 Index;
+} jit_ir_data_param;
+typedef enum jit_ir_data_type 
+{
+    IR_DATA_CONST  = sizeof(double),                    /* Const(double)                   + Tag(1) */
+    IR_DATA_VARREF = sizeof(jit_token),                 /* Name(jit_token)                 + Tag(1) */
+    IR_DATA_PARAM  = sizeof(jit_ir_data_param),         /* Name(strview) + ParamIndex(i32) + Tag(1) */
+} jit_ir_data_type;
+#endif
 #define FN_LOCATION_UNDEFINED -1
 
 
@@ -570,6 +578,7 @@ static int Ir_Op_GetArgSize(jit_ir_op_type Op)
     return 0;
 }
 
+
 static u8 *Ir_Op_PushAndReserveArgSize(jit *Jit, jit_ir_op_type Type, int ArgSize)
 {
     Jit->IrOpByteCount += 1 + ArgSize;
@@ -613,83 +622,158 @@ static void Ir_Op_PatchOp4(jit *Jit, int Location, i32 Arg)
 
 
 
-static int Ir_Data_GetCount(const jit *Jit)
+static inline int Ir_Data_GetPayloadSize(jit_ir_data_type DataType)
 {
-    return Jit->ScratchpadRightByteCount / sizeof(jit_ir_data);
+    STATIC_ASSERT(IR_DATA_CONST <= 0xFF, "cannot fit data size into byte");
+    STATIC_ASSERT(IR_DATA_VARREF <= 0xFF, "cannot fit data size into byte");
+    STATIC_ASSERT(IR_DATA_PARAM <= 0xFF, "cannot fit data size into byte");
+    switch (DataType)
+    {
+    case IR_DATA_CONST:     
+    case IR_DATA_PARAM:     
+    case IR_DATA_VARREF:    
+        return DataType;
+    }
+    UNREACHABLE();
+    return 0;
 }
 
-static jit_ir_data *Ir_Data_Get(jit *Jit, int Index)
+static int Ir_Data_GetCount(const jit *Jit)
+{
+    return Jit->IrDataByteCount;
+}
+
+static u8 *Ir_Data_Get(jit *Jit, i32 Offset)
 {
     ASSERT(Jit->IrData, "nullptr");
-    jit_ir_data *Data = Jit->IrData - (intptr_t)Index - 1;
+    ASSERT(Jit->IrDataByteCount > Offset, "Invalid Offset");
+    u8 *Data = Jit->IrData - Offset - 1;
     return Data;
 }
 
-static jit_ir_data *Ir_Data_Push(jit *Jit, jit_ir_data_type Type)
+static inline jit_ir_data_type Ir_Data_GetType(jit *Jit, i32 Index)
 {
+    return *Ir_Data_Get(Jit, Index);
+}
+
+static inline void Ir_Data_GetPayload(const u8 *Data, void *Payload)
+{
+    jit_ir_data_type PayloadSize = Ir_Data_GetPayloadSize(*Data);
+    MemCpy(Payload, Data - PayloadSize, PayloadSize);
+}
+
+static inline void Ir_Data_SetPayload(u8 *Data, const void *Payload)
+{
+    jit_ir_data_type PayloadSize = Ir_Data_GetPayloadSize(*Data);
+    MemCpy(Data - PayloadSize, Payload, PayloadSize);
+}
+
+/* returns pointer to payload space */
+static u8 *Ir_Data_PushReserveSize(jit *Jit, jit_ir_data_type Type)
+{
+#if 0
     jit_ir_data *Data = Jit_Scratchpad_PushRight(Jit, sizeof(jit_ir_data));
     Data->Type = Type;
     return Data;
+#else
+    Jit->IrDataByteCount += Type + 1;
+    u8 *Ptr = Jit_Scratchpad_PushRight(Jit, Type + 1);
+    *(Ptr + Type) = Type;
+    return Ptr;
+#endif
 }
 
 static void Ir_PopData(jit *Jit)
 {
-    Jit_Scratchpad_PopRight(Jit, sizeof(jit_ir_data));
+    u8 *Ptr = Jit_Scratchpad_RightPtr(Jit);
+    jit_ir_data_type DataType = *Ptr;
+    int DataSize = Ir_Data_GetPayloadSize(DataType);
+    Jit_Scratchpad_PopRight(Jit, 1 + DataSize);
 }
 
 static int Ir_Data_PushConst(jit *Jit, double Const)
 {
     int Index = Ir_Data_GetCount(Jit);
-    jit_ir_data *Data = Ir_Data_Push(Jit, IR_DATA_CONST);
-    Data->As.Const = Const;
+    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_CONST);
+    MemCpy(Ptr, &Const, sizeof(Const));
     return Index;
 }
 
 static int Ir_Data_PushRef(jit *Jit, const jit_token *VarName)
 {
     int Count = Ir_Data_GetCount(Jit);
-    Ir_Data_Push(Jit, IR_DATA_VAR_REF)->As.VarRef = *VarName;
+    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_VARREF);
+    MemCpy(Ptr, VarName, sizeof(*VarName));
     return Count;
 }
 
-static int Ir_Data_PushParam(jit *Jit, strview VarName, int ParamIndex)
+static int Ir_Data_PushParam(jit *Jit, strview VarName, i32 ParamIndex)
 {
     int Count = Ir_Data_GetCount(Jit);
-    jit_ir_data *Data = Ir_Data_Push(Jit, IR_DATA_PARAM);
-    Data->As.Param.Name = VarName;
-    Data->As.Param.Location = (jit_location) {
-        .Storage = STORAGE_MEM,
-        .As.Mem = TargetEnv_GetParam(ParamIndex, Jit->Storage.DataSize),
+    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_PARAM);
+    jit_ir_data_param Param = {
+        .Name = VarName,
+        .Index = ParamIndex,
     };
+    MemCpy(Ptr, &Param, sizeof Param);
     return Count;
 }
 
 
 
-static jit_location *Jit_FindVariable(jit *Jit, strview VarName, uint LocalScopeBase, uint LocalScopeVarCount)
+static jit_location Jit_GetParamLocation(const jit *Jit, const u8 *Data)
+{
+    jit_ir_data_param Param;
+    Ir_Data_GetPayload(Data, &Param);
+    return (jit_location) {
+        .Storage = STORAGE_MEM,
+        .As.Mem = TargetEnv_GetParam(Param.Index, Jit->Storage.DataSize),
+    };
+}
+
+static bool8 Jit_FindVariable(
+    jit *Jit, 
+    strview VarName, 
+    int LocalScopeBase, int LocalScopeVarCount, 
+    jit_location *VarLocation)
 {
     const char *Ptr = VarName.Ptr;
     int Len = VarName.Len;
-    /* search local scope if provided */
-    for (uint i = 0; i < LocalScopeVarCount; i++)
-    {
-        jit_ir_data *Local = Ir_Data_Get(Jit, LocalScopeBase + i);
-        ASSERT(IR_DATA_PARAM == Local->Type, "unreachable");
 
-        if (Len == Local->As.Param.Name.Len 
-        && StrEqu(Ptr, Local->As.Param.Name.Ptr, Len))
+    /* search local scope if provided */
+    i32 DataOffset = LocalScopeBase;
+    for (int i = 0; i < LocalScopeVarCount; i++)
+    {
+        u8 *Data = Ir_Data_Get(Jit, DataOffset);
+        jit_ir_data_type Type = *Data;
+        ASSERT(IR_DATA_PARAM == Type, "unreachable");
+        jit_ir_data_param Param; 
+        Ir_Data_GetPayload(Data, &Param);
+
+        if (Len == Param.Name.Len
+        && StrEqu(Ptr, Param.Name.Ptr, Len))
         {
-            return &Local->As.Param.Location;
+            if (NULL != VarLocation)
+            {
+                *VarLocation = Jit_GetParamLocation(Jit, Data);
+            }
+            return true;
         }
+
+        DataOffset += 1 + Ir_Data_GetPayloadSize(Type);
     }
 
     /* failed local scope search, switch to global */
     def_table_entry *Entry = DefTable_Find(&Jit->Global, Ptr, Len, TYPE_VARIABLE);
     if (NULL == Entry)
     {
-        return NULL;
+        return false;
     }
-    return &Entry->As.Variable.Location;
+    if (NULL != VarLocation)
+    {
+        *VarLocation = Entry->As.Variable.Location;
+    }
+    return true;
 }
 
 
@@ -716,10 +800,13 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         }
 
         /* negate const */
-        jit_ir_data *Data = Ir_Data_Get(Jit, DataIndex);
-        if (IR_DATA_CONST == Data->Type)
+        u8 *Data = Ir_Data_Get(Jit, DataIndex);
+        if (IR_DATA_CONST == *Data)
         {
-            Data->As.Const = -Data->As.Const;
+            double Const;
+            Ir_Data_GetPayload(Data, &Const);
+            Const = -Const;
+            Ir_Data_SetPayload(Data, &Const);
         }
         /* value is not a const, load it onto the ir stack and negate it */
         else
@@ -768,14 +855,11 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         /* variable reference */
         else
         {
-            if (!AllowForwardReference)
+            if (!AllowForwardReference
+            && !Jit_FindVariable(Jit, Token.Str, 0, 0, NULL))
             {
-                jit_location *Var = Jit_FindVariable(Jit, Token.Str, 0, 0);
-                if (!Var)
-                {
-                    Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
-                    break;
-                }
+                Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
+                break;
             }
             DataIndex = Ir_Data_PushRef(Jit, &Token);
         }
@@ -815,26 +899,31 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
 
         /* const expr, evaluate data now */
         if (Left != -1 && Right != -1 
-        && IR_DATA_CONST == Ir_Data_Get(Jit, Left)->Type 
-        && IR_DATA_CONST == Ir_Data_Get(Jit, Right)->Type)
+        && IR_DATA_CONST == Ir_Data_GetType(Jit, Left) 
+        && IR_DATA_CONST == Ir_Data_GetType(Jit, Right))
         {
-#define CONST(index) Ir_Data_Get(Jit, index)->As.Const
             ASSERT(Left == Ir_Data_GetCount(Jit) - 2, "");
             ASSERT(Right == Ir_Data_GetCount(Jit) - 1, "");
+
+            double ConstLeft, ConstRight;
+            u8 *LeftPtr = Ir_Data_Get(Jit, Left);
+            u8 *RightPtr = Ir_Data_Get(Jit, Left);
+            Ir_Data_GetPayload(LeftPtr, &ConstLeft);
+            Ir_Data_GetPayload(RightPtr, &ConstRight);
             switch (Oper)
             {
-            case TOK_PLUS:  CONST(Left) += CONST(Right); break;
-            case TOK_MINUS: CONST(Left) -= CONST(Right); break;
-            case TOK_STAR:  CONST(Left) *= CONST(Right); break;
-            case TOK_SLASH: CONST(Left) /= CONST(Right); break;
+            case TOK_PLUS:  ConstLeft += ConstRight; break;
+            case TOK_MINUS: ConstLeft -= ConstRight; break;
+            case TOK_STAR:  ConstLeft *= ConstRight; break;
+            case TOK_SLASH: ConstLeft /= ConstRight; break;
             default:
             {
                 UNREACHABLE();
             } break;
             }
+            Ir_Data_SetPayload(LeftPtr, &ConstLeft);
             Ir_PopData(Jit);
             Left = Ir_Data_GetCount(Jit) - 1;
-#undef CONST
         }
         /* data evaluation is deferred to run time (ir stack) */
         else 
@@ -864,31 +953,32 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
     return Left;
 }
 
-static jit_location Jit_IrDataAsLocation(jit *Jit, const jit_ir_data *Data, int LocalScopeBase, int LocalScopeVarCount)
+static jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, int LocalScopeVarCount)
 {
     jit_location Result = { 0 };
-    switch (Data->Type)
+    jit_ir_data_type Type = *Data;
+    switch (Type)
     {
     case IR_DATA_CONST:
     {
+        double Const;
+        Ir_Data_GetPayload(Data, &Const);
         Result.Storage = STORAGE_MEM;
-        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
+        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Const);
     } break;
-    case IR_DATA_VAR_REF:
+    case IR_DATA_VARREF:
     {
-        jit_location *Entry = Jit_FindVariable(Jit, Data->As.VarRef.Str, LocalScopeBase, LocalScopeVarCount);
-        if (!Entry)
+        jit_token Name;
+        Ir_Data_GetPayload(Data, &Name);
+        if (!Jit_FindVariable(Jit, Name.Str, LocalScopeBase, LocalScopeVarCount, &Result))
         {
-            Error_AtToken(&Jit->Error, &Data->As.VarRef, "Undefined variable.");
+            Error_AtToken(&Jit->Error, &Name, "Undefined variable.");
         }
-        else
-        {
-            Result = *Entry;
-        }
+        ASSERT(Result.Storage == STORAGE_MEM, "unreachable");
     } break;
     case IR_DATA_PARAM:
     {
-        Result = Data->As.Param.Location;
+        Result = Jit_GetParamLocation(Jit, Data);
     } break;
     }
     return Result;
@@ -1008,11 +1098,10 @@ static u8 *Jit_Ir_TranslateSingle(
             /* set parameters to valid location */
             for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
             {
-                int Index = Fn->ParamStart + i;
-                jit_ir_data *Data = Ir_Data_Get(Jit, Index);
-                ASSERT(Data->Type == IR_DATA_PARAM, "unreachable");
+                //int Index = Fn->ParamStart + i;
+                //jit_ir_data *Data = Ir_Data_Get(Jit, Index);
+                //ASSERT(Data->Type == IR_DATA_PARAM, "unreachable");
                 jit_mem NonVolatileParam = TargetEnv_GetParam(i, Jit->Storage.DataSize);
-
                 jit_reg VolatileParam = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
                 Emit_Store(&Jit->Emitter, 
                     VolatileParam,
@@ -1053,7 +1142,7 @@ static u8 *Jit_Ir_TranslateSingle(
         {
             i32 LoadIndex = IR_CONSUME_I32();
 
-            const jit_ir_data *IrData = Ir_Data_Get(Jit, LoadIndex);
+            const u8 *IrData = Ir_Data_Get(Jit, LoadIndex);
             int ParamStart = 0;
             int ParamCount = 0;
             if (Fn)
@@ -1482,19 +1571,38 @@ void Jit_Destroy(jit *Jit)
 }
 
 
-static void PrintVars(jit *Jit, int Start, int Count)
+static void PrintVars(jit *Jit)
 {
-    ASSERT(Start + Count <= Ir_Data_GetCount(Jit), "unreachable");
-    for (int i = Start; i < Start + Count; i++)
+    i32 Offset = 0;
+    int i = 0;
+    while (Offset < Ir_Data_GetCount(Jit))
     {
-        jit_ir_data *Data = Ir_Data_Get(Jit, i);
-        switch (Data->Type)
+        jit_ir_data_type Type = Ir_Data_GetType(Jit, Offset);
+        const u8 *Data = Ir_Data_Get(Jit, Offset);
+        switch (Type)
         {
-        case IR_DATA_CONST:   printf("const  %d = %f\n", i, Data->As.Const); break;
-        case IR_DATA_VAR_REF: printf("varref %d = '%.*s'\n", i, Data->As.VarRef.Str.Len, Data->As.VarRef.Str.Ptr); break;
-        case IR_DATA_PARAM: printf("param %d = '%.*s'\n", i, Data->As.Param.Name.Len, Data->As.Param.Name.Ptr); break;
+        case IR_DATA_CONST:  
+        {
+            double Const;
+            Ir_Data_GetPayload(Data, &Const);
+            printf("Const %d = %f\n", i, Const);
+        } break;
+        case IR_DATA_VARREF: 
+        {
+            jit_token VarRef;
+            Ir_Data_GetPayload(Data, &VarRef);
+            printf("VarRef %d = '%.*s'\n", i, VarRef.Str.Len, VarRef.Str.Ptr);
+        } break;
+        case IR_DATA_PARAM:  
+        {
+            jit_ir_data_param Param;
+            Ir_Data_GetPayload(Data, &Param);
+            printf("Param %d = '%.*s', %d\n", i, Param.Name.Len, Param.Name.Ptr, Param.Index);
+        } break;
         default: UNREACHABLE(); break;
         }
+        i++;
+        Offset += 1 + Ir_Data_GetPayloadSize(Type);
     }
 }
 
@@ -1524,10 +1632,11 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
         goto ErrReturn;
 
     printf("IR OK, free mem: %d\n", Jit_Scratchpad_BytesRemain(Jit));
-#if 0
+#if 1
     printf("============= var table ============\n");
-    PrintVars(Jit, 0, Ir_Data_GetCount(Jit));
+    PrintVars(Jit);
 
+#else
     printf("============= instructions ============\n");
     for (int i = 0; i < Ir_GetOpCount(Jit); i++)
     {

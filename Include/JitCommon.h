@@ -33,7 +33,7 @@ typedef enum jit_token_type
 
 typedef enum jit_storage_type 
 {
-    STORAGE_MEM = 0,
+    STORAGE_MEM = 1,
     STORAGE_REG,
 } jit_storage_type;
 
