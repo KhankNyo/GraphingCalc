@@ -1501,7 +1501,7 @@ static u32 Jit_Hash(const char *Str, int StrLen)
 static void Jit_Reset(jit *Jit, const char *Location, jit_compilation_flags Flags)
 {
     Jit->PrevVarEnd = VAR_END_LAST;
-    Jit->PrevFnEnd = VAR_END_LAST;
+    Jit->PrevFnEnd = FN_END_LAST;
     Jit->IrOpByteCount = 0;
     Jit->ScratchpadLeftByteCount = 0;
     Jit->ScratchpadRightByteCount = 0;
