@@ -110,6 +110,7 @@ static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex)
 }
 static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
 {
+    (void)DataSize;
     if (TargetEnv_IsArgumentInReg(Index))
     {
         jit_expression Reg = {
@@ -120,7 +121,6 @@ static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
     }
     else
     {
-        (void)DataSize;
         jit_expression Mem = {
             .Storage = STORAGE_MEM,
             .As.Mem = {
@@ -131,17 +131,13 @@ static inline jit_expression TargetEnv_GetArg(int Index, int DataSize)
         return Mem;
     }
 }
-static inline jit_expression TargetEnv_GetParam(int Index, int DataSize)
+static inline jit_mem TargetEnv_GetParam(int Index, int DataSize)
 {
     (void)DataSize;
-    jit_expression Mem = {
-        .Storage = STORAGE_MEM,
-        .As.Mem = {
-            .BaseReg = RBP,
-            .Offset = 0x10 + (Index + 1) * 8, /* always align to 8-byte boundary */
-        },
+    return (jit_mem) {
+        .BaseReg = RBP,
+        .Offset = 0x10 + (Index + 1) * 8, /* always align to 8-byte boundary */
     };
-    return Mem;
 }
 static inline int TargetEnv_GetReturnReg(void)
 {

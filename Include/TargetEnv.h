@@ -20,7 +20,7 @@ static inline bool8 TargetEnv_CallerShouldSave(int Reg);
 static inline int TargetEnv_GetReturnReg(void);
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
 static inline jit_expression TargetEnv_GetArg(int Index, int DataSize);
-static inline jit_expression TargetEnv_GetParam(int Index, int DataSize);
+static inline jit_mem TargetEnv_GetParam(int Index, int DataSize);
 
 
 /* each platform defines their own emitter */

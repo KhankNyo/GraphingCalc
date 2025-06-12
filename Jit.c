@@ -39,7 +39,7 @@ typedef enum jit_ir_data_type
 {
     IR_DATA_CONST,
     IR_DATA_VAR_REF,
-    IR_DATA_VAR_DEF,
+    IR_DATA_PARAM,
 } jit_ir_data_type;
 struct jit_ir_data 
 {
@@ -47,7 +47,10 @@ struct jit_ir_data
     union {
         double Const;
         jit_token VarRef;
-        jit_variable VarDef;
+        struct {
+            strview Name;
+            jit_expression Expr;
+        } Param;
     } As;
 };
 struct jit_ir_op
@@ -199,6 +202,8 @@ static jit_expression *Ir_Stack_Pop(jit_ir_stack *Stack)
 
 static void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count)
 {
+    ASSERT(Stack->Count >= Count, "unreachable");
+    Stack->Count -= Count;
     Jit_Scratchpad_PopLeft(Stack->Jit, Count*sizeof(jit_expression));
 }
 
@@ -615,34 +620,38 @@ static int Ir_PushConst(jit *Jit, double Const)
 
 static int Ir_PushVarRef(jit *Jit, const jit_token *VarName)
 {
-    int Index = Ir_GetDataCount(Jit);
+    int Count = Ir_GetDataCount(Jit);
     Ir_PushData(Jit, IR_DATA_VAR_REF)->As.VarRef = *VarName;
-    return Index;
+    return Count;
 }
 
-static int Ir_PushVarDef(jit *Jit, strview VarName)
+static int Ir_PushParam(jit *Jit, strview VarName, int ParamIndex)
 {
-    int Index = Ir_GetDataCount(Jit);
-    Ir_PushData(Jit, IR_DATA_VAR_DEF)->As.VarDef.Dbg.Str = VarName;
-    return Index;
+    int Count = Ir_GetDataCount(Jit);
+    jit_ir_data *Data = Ir_PushData(Jit, IR_DATA_PARAM);
+    Data->As.Param.Name = VarName;
+    Data->As.Param.Expr = (jit_expression) {
+        .Storage = STORAGE_MEM,
+        .As.Mem = TargetEnv_GetParam(ParamIndex, Jit->Storage.DataSize),
+    };
+    return Count;
 }
 
 
 
-static jit_variable *Jit_FindVariable(jit *Jit, strview VarName, uint LocalScopeBase, uint LocalScopeVarCount)
+static jit_expression *Jit_FindVariable(jit *Jit, strview VarName, uint LocalScopeBase, uint LocalScopeVarCount)
 {
     const char *Ptr = VarName.Ptr;
     int Len = VarName.Len;
     for (uint i = 0; i < LocalScopeVarCount; i++)
     {
         jit_ir_data *Local = Jit_Ir_GetData(Jit, LocalScopeBase + i);
-        ASSERT(IR_DATA_VAR_DEF == Local->Type, "unreachable");
-        jit_variable *Variable = &Local->As.VarDef;
+        ASSERT(IR_DATA_PARAM == Local->Type, "unreachable");
 
-        if (Len == Variable->Dbg.Str.Len 
-        && StrEqu(Ptr, Variable->Dbg.Str.Ptr, Len))
+        if (Len == Local->As.Param.Name.Len 
+        && StrEqu(Ptr, Local->As.Param.Name.Ptr, Len))
         {
-            return Variable;
+            return &Local->As.Param.Expr;
         }
     }
 
@@ -652,7 +661,7 @@ static jit_variable *Jit_FindVariable(jit *Jit, strview VarName, uint LocalScope
     {
         return NULL;
     }
-    return &Entry->As.Variable;
+    return &Entry->As.Variable.Expr;
 }
 
 
@@ -740,7 +749,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         {
             if (!AllowForwardReference)
             {
-                jit_variable *Var = Jit_FindVariable(Jit, Token.Str, 0, 0);
+                jit_expression *Var = Jit_FindVariable(Jit, Token.Str, 0, 0);
                 if (!Var)
                 {
                     Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
@@ -846,19 +855,19 @@ static jit_expression Jit_IrDataAsExpr(jit *Jit, const jit_ir_data *Data, int Lo
     } break;
     case IR_DATA_VAR_REF:
     {
-        jit_variable *Entry = Jit_FindVariable(Jit, Data->As.VarRef.Str, LocalScopeBase, LocalScopeVarCount);
+        jit_expression *Entry = Jit_FindVariable(Jit, Data->As.VarRef.Str, LocalScopeBase, LocalScopeVarCount);
         if (!Entry)
         {
             Error_AtToken(&Jit->Error, &Data->As.VarRef, "Undefined variable.");
         }
         else
         {
-            Result = Entry->Expr;
+            Result = *Entry;
         }
     } break;
-    case IR_DATA_VAR_DEF:
+    case IR_DATA_PARAM:
     {
-        Result = Data->As.VarDef.Expr;
+        Result = Data->As.Param.Expr;
     } break;
     }
     return Result;
@@ -918,7 +927,7 @@ static void PrintVars(jit *Jit, int Start, int Count)
         {
         case IR_DATA_CONST:   printf("const  %d = %f\n", i, Data->As.Const); break;
         case IR_DATA_VAR_REF: printf("varref %d = '%.*s'\n", i, Data->As.VarRef.Str.Len, Data->As.VarRef.Str.Ptr); break;
-        case IR_DATA_VAR_DEF: printf("vardef %d = '%.*s'\n", i, Data->As.VarDef.Dbg.Str.Len, Data->As.VarDef.Dbg.Str.Ptr); break;
+        case IR_DATA_PARAM: printf("param %d = '%.*s'\n", i, Data->As.Param.Name.Len, Data->As.Param.Name.Ptr); break;
         default: UNREACHABLE(); break;
         }
     }
@@ -989,24 +998,19 @@ static void Jit_TranslateIr(jit *Jit)
             Emit_FunctionAllocateStack(&Jit->Emitter, Op->Entry.StackSize);
 
             /* set parameters to valid location */
-            for (int i = 0; i < Fn->ParamCount; i++)
+            for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
             {
                 int Index = Fn->ParamStart + i;
-                jit_ir_data *Param = Jit_Ir_GetData(Jit, Index);
-                ASSERT(IR_DATA_VAR_DEF == Param->Type, "unreachable");
+                jit_ir_data *Data = Jit_Ir_GetData(Jit, Index);
+                ASSERT(Data->Type == IR_DATA_PARAM, "unreachable");
+                jit_mem NonVolatileParam = TargetEnv_GetParam(i, Jit->Storage.DataSize);
 
-                jit_expression ArgAtCaller = TargetEnv_GetArg(i, Jit->Storage.DataSize);
-                jit_expression ArgAtCallee = TargetEnv_GetParam(i, Jit->Storage.DataSize);
-                /* if param on entry is in register, store it to a location specified by the abi */
-                if (STORAGE_REG == ArgAtCaller.Storage)
-                {
-                    Emit_Store(&Jit->Emitter, 
-                        ArgAtCaller.As.Reg, 
-                        ArgAtCallee.As.Mem.BaseReg, 
-                        ArgAtCallee.As.Mem.Offset
-                    );
-                }
-                Param->As.VarDef.Expr = ArgAtCallee;
+                jit_reg VolatileParam = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
+                Emit_Store(&Jit->Emitter, 
+                    VolatileParam,
+                    NonVolatileParam.BaseReg,
+                    NonVolatileParam.Offset
+                );
             }
         } break;
         case IR_OP_RETURN:
@@ -1015,10 +1019,12 @@ static void Jit_TranslateIr(jit *Jit)
             jit_expression *ReturnValue = Ir_Stack_Pop(Stack);
             Jit_CopyToReg(Jit, TargetEnv_GetReturnReg(), ReturnValue);
             Emit_FunctionExit(&Jit->Emitter);
-
             Fn->Dbg.ByteCount = Jit_GetEmitterBufferSize(Jit) - Fn->Dbg.Location;
+
+            /* deallocate return register and other param regs */
             if (STORAGE_REG == ReturnValue->Storage)
                 Storage_DeallocateReg(&Jit->Storage, ReturnValue->As.Reg);
+
             Fn = NULL;
         } break;
         case IR_OP_CALL_ARG_START:
@@ -1164,7 +1170,7 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
         do {
             ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
             jit_token Parameter = CurrToken(Jit); 
-            Ir_PushVarDef(Jit, Parameter.Str);
+            Ir_PushParam(Jit, Parameter.Str, Function->ParamCount);
             Function->ParamCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
