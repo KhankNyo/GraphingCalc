@@ -21,19 +21,21 @@ typedef enum precedence
 
 typedef enum jit_ir_op_type 
 {
-    IR_OP_ADD,
-    IR_OP_SUB,
-    IR_OP_MUL,
-    IR_OP_DIV,
-    IR_OP_NEG,
-    IR_OP_LOAD,
-    IR_OP_CALL_ARG_START,
-    IR_OP_CALL,
-    IR_OP_SWAP,
-    IR_OP_STORE,
-    IR_OP_FN_BEGIN,
-    IR_OP_ENTRY, 
-    IR_OP_RETURN,
+                            /* instruction_name/arg_name(byte_count) */
+    IR_OP_DONE = 0,         /* Instruction(1) */
+    IR_OP_ADD,              /* Instruction(1) */
+    IR_OP_SUB,              /* Instruction(1) */
+    IR_OP_MUL,              /* Instruction(1) */
+    IR_OP_DIV,              /* Instruction(1) */
+    IR_OP_NEG,              /* Instruction(1) */
+    IR_OP_LOAD,             /* Instruction(1) + LoadIndex(4) */
+    IR_OP_CALL_ARG_START,   /* Instruction(1) */
+    IR_OP_CALL,             /* Instruction(1) + ArgCount(4) + jit_token(sizeof(jit_token)) */
+    IR_OP_SWAP,             /* Instruction(1) */
+    IR_OP_STORE,            /* Instruction(1) + Offset(4) */
+    IR_OP_FN_BEGIN,         /* Instruction(1) + FnBegin(sizeof(ptr)) */
+    IR_OP_ENTRY,            /* Instruction(1) */
+    IR_OP_RETURN,           /* Instruction(1) */
 } jit_ir_op_type;
 typedef enum jit_ir_data_type 
 {
@@ -53,47 +55,10 @@ typedef struct jit_ir_data
         } Param;
     } As;
 } jit_ir_data;
-typedef struct jit_ir_op
-{
-    union {
-        int LoadIndex; 
-        struct {
-            int ArgCount;
-            jit_token FnName;
-        } Call;
-        struct {
-            i32 StackSize;
-        } Entry;
-        jit_function *FnBegin;
-        jit_mem StoreDst;
-    };
-    jit_ir_op_type Type;
-} jit_ir_op;
-
 #define FN_LOCATION_UNDEFINED -1
 
 
 static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference);
-
-static const char *Get_OpName(jit_ir_op_type Op)
-{
-    const char *Name[] = {
-        [IR_OP_ADD] = "IR_OP_ADD", 
-        [IR_OP_SUB] = "IR_OP_SUB", 
-        [IR_OP_MUL] = "IR_OP_MUL", 
-        [IR_OP_DIV] = "IR_OP_DIV", 
-        [IR_OP_NEG] = "IR_OP_NEG", 
-        [IR_OP_LOAD] = "IR_OP_LOAD", 
-        [IR_OP_CALL_ARG_START] = "IR_OP_CALL_ARG_START", 
-        [IR_OP_CALL] = "IR_OP_CALL", 
-        [IR_OP_SWAP] = "IR_OP_SWAP", 
-        [IR_OP_STORE] = "IR_OP_STORE", 
-        [IR_OP_FN_BEGIN] = "IR_OP_FN_BEGIN", 
-        [IR_OP_ENTRY] = "IR_OP_ENTRY",  
-        [IR_OP_RETURN] = "IR_OP_RETURN", 
-    };
-    return Name[Op];
-}
 
 
 static jit_location Jit_AllocateStack(jit *Jit)
@@ -574,9 +539,9 @@ static int Ir_GetDataCount(const jit *Jit)
 {
     return Jit->ScratchpadRightByteCount / sizeof(jit_ir_data);
 }
-static int Ir_GetOpCount(const jit *Jit)
+static int Ir_GetOpSize(const jit *Jit)
 {
-    return Jit->ScratchpadLeftByteCount / sizeof(jit_ir_op);
+    return Jit->IrOpByteCount;
 }
 
 static jit_ir_data *Jit_Ir_GetData(jit *Jit, int Index)
@@ -586,11 +551,35 @@ static jit_ir_data *Jit_Ir_GetData(jit *Jit, int Index)
     return Data;
 }
 
-static jit_ir_op *Ir_PushOp(jit *Jit, jit_ir_op_type Type)
+
+static u8 *Ir_PushOpS(jit *Jit, jit_ir_op_type Type, int ArgSize)
 {
-    jit_ir_op *Op = Jit_Scratchpad_PushLeft(Jit, sizeof(jit_ir_op));
-    Op->Type = Type;
-    return Op;
+    Jit->IrOpByteCount += 1 + ArgSize;
+    u8 *Ptr = Jit_Scratchpad_PushLeft(Jit, 1 + ArgSize);
+    *Ptr = Type;
+    return Ptr + 1;
+}
+static void Ir_PushOp(jit *Jit, jit_ir_op_type Type)
+{
+    Ir_PushOpS(Jit, Type, 0);
+}
+static void Ir_PushOp4(jit *Jit, jit_ir_op_type Type, i32 Arg)
+{
+    ASSERT(Type <= 0xFF, "unreachable");
+
+    u8 *ArgPtr = Ir_PushOpS(Jit, Type, sizeof(i32));
+    MemCpy(ArgPtr, &Arg, sizeof(i32));
+}
+static void Ir_PushOpCall(jit *Jit, i32 ArgCount, const jit_token *FnName)
+{
+    u8 *ArgPtr = Ir_PushOpS(Jit, IR_OP_CALL, sizeof(i32) + sizeof(jit_token));
+    MemCpy(ArgPtr, &ArgCount, sizeof(i32));
+    MemCpy(ArgPtr + sizeof(i32), FnName, sizeof(jit_token));
+}
+static void Ir_PushOpFnBegin(jit *Jit, const jit_function *FnBegin)
+{
+    u8 *ArgPtr = Ir_PushOpS(Jit, IR_OP_FN_BEGIN, sizeof(jit_function *));
+    MemCpy(ArgPtr, &FnBegin, sizeof(jit_function *));
 }
 
 static jit_ir_data *Ir_PushData(jit *Jit, jit_ir_data_type Type)
@@ -605,9 +594,9 @@ static void Ir_PopData(jit *Jit)
     Jit_Scratchpad_PopRight(Jit, sizeof(jit_ir_data));
 }
 
-static void Ir_PushOpLoad(jit *Jit, int Index)
+static void Ir_PushOpLoad(jit *Jit, i32 Index)
 {
-    Ir_PushOp(Jit, IR_OP_LOAD)->LoadIndex = Index;
+    Ir_PushOp4(Jit, IR_OP_LOAD, Index);
 }
 
 static int Ir_PushConst(jit *Jit, double Const)
@@ -643,6 +632,7 @@ static jit_location *Jit_FindVariable(jit *Jit, strview VarName, uint LocalScope
 {
     const char *Ptr = VarName.Ptr;
     int Len = VarName.Len;
+    /* search local scope if provided */
     for (uint i = 0; i < LocalScopeVarCount; i++)
     {
         jit_ir_data *Local = Jit_Ir_GetData(Jit, LocalScopeBase + i);
@@ -726,17 +716,13 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
                     {
                         Ir_PushOpLoad(Jit, Arg);
                     }
-                    Storage_PushStack(&Jit->Storage, 1);
                     ArgCount++;
                 } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
             }
             ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument list.");
-            Storage_PopStack(&Jit->Storage, ArgCount);
 
             /* call Function with ArgCount arguments on stack */
-            jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_CALL);
-            Op->Call.ArgCount = ArgCount;
-            Op->Call.FnName = Token;
+            Ir_PushOpCall(Jit, ArgCount, &Token);
 
             /* no data index, result on ir stack */
             DataIndex = -1;
@@ -883,6 +869,9 @@ static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
     int IrStackCount = Stack->Count;
     ASSERT(ArgCount <= IrStackCount, "arg count");
 
+    /* reserve stack space for arguments */
+    Storage_PushStack(&Jit->Storage, ArgCount);
+
     /* emit arguments */
     for (int i = 0; i < ArgCount; i++)
     {
@@ -912,6 +901,10 @@ static void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
         jit_reg Reg = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
         Storage_DeallocateReg(&Jit->Storage, Reg);
     }
+
+    /* deallocate stack space used for arguments, 
+     * TODO: this is for caller cleanup, how about callee cleanup? */
+    Storage_PopStack(&Jit->Storage, ArgCount);
 }
 
 
@@ -927,20 +920,29 @@ static jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName)
     return &Entry->As.Function;
 }
 
+
 static void Jit_TranslateIr(jit *Jit)
 {
+#define IR_CONSUME_BYTE() *IP++
+#define IR_CONSUME_AND_INTERPRET(datatype) ((IP += sizeof(datatype)), (datatype *)(IP - sizeof(datatype)))
+#define IR_CONSUME_I32() *IR_CONSUME_AND_INTERPRET(i32)
     jit_ir_stack Stack_ = Ir_Stack_Init(Jit);
     jit_ir_stack *Stack = &Stack_;
     jit_fnref_stack FnRef_ = Ir_FnRef_Init(Jit);
     jit_fnref_stack *FnRef = &FnRef_;
 
-    int IrOpCount = Ir_GetOpCount(Jit);
     jit_function *Fn = NULL;
-    for (int i = 0; i < IrOpCount; i++)
+    u8 *IP = Jit->IrOp;
+    const u8 *InsEnd = IP + Ir_GetOpSize(Jit);
+    jit_ir_op_type Op = IR_OP_DONE;
+
+    while (IP < InsEnd)
     {
-        jit_ir_op *Op = Jit->IrOp + i;
-        switch (Op->Type)
+        Op = IR_CONSUME_BYTE();
+
+        switch (Op)
         {
+        case IR_OP_DONE: goto DoneTranslating;
         case IR_OP_SWAP:
         {
             ASSERT(Stack->Count >= 2, "size");
@@ -951,7 +953,9 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_LOAD:
         {
-            jit_ir_data *IrData = Jit_Ir_GetData(Jit, Op->LoadIndex);
+            i32 LoadIndex = IR_CONSUME_I32();
+
+            const jit_ir_data *IrData = Jit_Ir_GetData(Jit, LoadIndex);
             int ParamStart = 0;
             int ParamCount = 0;
             if (Fn)
@@ -964,14 +968,19 @@ static void Jit_TranslateIr(jit *Jit)
         } break;
         case IR_OP_STORE: /* store expr on stack to dst */
         {
+            i32 Offset = IR_CONSUME_I32();
+
             jit_reg Src = Jit_ToReg(Jit, Stack, Ir_Stack_Pop(Stack));
-            jit_mem Dst = Op->StoreDst;
+            jit_mem Dst = {
+                .BaseReg = TargetEnv_GetGlobalPtrReg(),
+                .Offset = Offset,
+            };
             Emit_Store(&Jit->Emitter, Src, Dst.BaseReg, Dst.Offset);
             Storage_DeallocateReg(&Jit->Storage, Src);
         } break;
         case IR_OP_FN_BEGIN:
         {
-            Fn = Op->FnBegin;
+            Fn = *IR_CONSUME_AND_INTERPRET(jit_function *);
             Fn->Location = Emit_FunctionEntry(&Jit->Emitter);
         } break;
         case IR_OP_ENTRY:
@@ -999,41 +1008,46 @@ static void Jit_TranslateIr(jit *Jit)
             /* pop the top of the stack and emit return ins */
             jit_location *ReturnValue = Ir_Stack_Pop(Stack);
             Jit_CopyToReg(Jit, TargetEnv_GetReturnReg(), ReturnValue);
+            /* deallocate return register */
+            if (STORAGE_REG == ReturnValue->Storage)
+            {
+                Storage_DeallocateReg(&Jit->Storage, ReturnValue->As.Reg);
+            }
+
+            /* emit return */
             Emit_FunctionExit(&Jit->Emitter, Fn->Location, Storage_GetMaxStackSize(&Jit->Storage));
             Fn->InsByteCount = Jit_GetEmitterBufferSize(Jit) - Fn->Location;
-
-            /* deallocate return register and other param regs */
-            if (STORAGE_REG == ReturnValue->Storage)
-                Storage_DeallocateReg(&Jit->Storage, ReturnValue->As.Reg);
 
             Fn = NULL;
         } break;
         case IR_OP_CALL_ARG_START:
         {
-            /* make all previous expr on the stack a memory location */
+            /* make all previous location on the stack a memory location */
             Ir_Stack_SpillReg(Stack, Jit);
         } break;
         case IR_OP_CALL:
         {
-            jit_function *Function = Jit_FindFunction(Jit, &Op->Call.FnName);
+            /* get args */
+            i32 ArgCount = IR_CONSUME_I32();
+            const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
+
+            const jit_function *Function = Jit_FindFunction(Jit, FnName);
             if (!Function)
             {
-                Error_AtToken(&Jit->Error, &Op->Call.FnName, "Undefined function.");
+                Error_AtToken(&Jit->Error, FnName, "Undefined function.");
                 break;
             }
 
             /* check param and arg count */
-            if (Function->ParamCount != Op->Call.ArgCount)
+            if (Function->ParamCount != ArgCount)
             {
                 const char *Plural = Function->ParamCount > 1? 
                     "arguments" : "argument";
-                Error_AtToken(&Jit->Error, &Op->Call.FnName, "Expected %d %s, got %d instead.", 
-                    Function->ParamCount, Plural, Op->Call.ArgCount
+                Error_AtToken(&Jit->Error, FnName, "Expected %d %s, got %d instead.", 
+                    Function->ParamCount, Plural, ArgCount
                 );
                 break;
             }
-            /* reserve space on the stack for the call */
-            Storage_PushStack(&Jit->Storage, Op->Call.ArgCount);
 
             /* emit the args and call itself */
             Jit_EmitCallArgs(Stack, Function->ParamCount);
@@ -1042,9 +1056,6 @@ static void Jit_TranslateIr(jit *Jit)
             {
                 Ir_FnRef_Push(FnRef, Function, CallLocation);
             }
-            /* TODO: this is callee cleanup, support caller cleanup in the future, 
-             * or move ir translation step to the emitter */
-            Storage_PopStack(&Jit->Storage, Op->Call.ArgCount);
 
             /* return */
             Storage_ForceAllocateReg(&Jit->Storage, TargetEnv_GetReturnReg());
@@ -1065,7 +1076,7 @@ static void Jit_TranslateIr(jit *Jit)
             jit_location *Left = Ir_Stack_Pop(Stack);
 
             /* if commutative and right was in reg first, swap operands */
-            if ((IR_OP_ADD == Op->Type || IR_OP_MUL == Op->Type)
+            if ((IR_OP_ADD == Op || IR_OP_MUL == Op)
             && STORAGE_REG == Right->Storage)
             {
                 SWAP(jit_location *, Left, Right);
@@ -1085,7 +1096,7 @@ static void Jit_TranslateIr(jit *Jit)
         Emit_ ## op_name (&Jit->Emitter, left_reg, (right_expr)->As.Mem.BaseReg, (right_expr)->As.Mem.Offset);\
     else Emit_ ## op_name ## Reg(&Jit->Emitter, left_reg, (right_expr)->As.Reg);\
 } while (0)
-            switch (Jit->IrOp[i].Type)
+            switch (Op)
             {
             case IR_OP_ADD: OP(Add, Result.As.Reg, Right); break;
             case IR_OP_SUB: OP(Sub, Result.As.Reg, Right); break;
@@ -1116,9 +1127,11 @@ static void Jit_TranslateIr(jit *Jit)
         }
 #undef OP
     }
+    int FunctionCallCount;
+DoneTranslating:
 
     /* patch function calls */
-    int FunctionCallCount = Ir_FnRef_Count(FnRef);
+    FunctionCallCount = Ir_FnRef_Count(FnRef);
     for (int i = 0; i < FunctionCallCount; i++)
     {
         jit_fnref *Ref = Ir_FnRef_Pop(FnRef);
@@ -1133,12 +1146,12 @@ static void Jit_TranslateIr(jit *Jit)
 
 
 
-static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
+static jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen)
 {
     def_table_entry *Label = DefTable_Define(&Jit->Global, Name, NameLen, TYPE_FUNCTION);
     jit_function *Function = &Label->As.Function;
-    jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_FN_BEGIN);
-    Op->FnBegin = Function;
+
+    Ir_PushOpFnBegin(Jit, Function);
     Function->Location = FN_LOCATION_UNDEFINED;
     return Function;
 }
@@ -1146,8 +1159,7 @@ static jit_function *DefineFunction(jit *Jit, const char *Name, int NameLen)
 static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
 {
     /* consumed '(' */
-    jit_function *Function = DefineFunction(Jit, FnName->Str.Ptr, FnName->Str.Len);
-    Storage_PushScope(&Jit->Storage);
+    jit_function *Function = Jit_DefineFunction(Jit, FnName->Str.Ptr, FnName->Str.Len);
 
     /* function params */
     Function->ParamCount = 0;
@@ -1165,17 +1177,15 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after function declaration.");
 
     /* function body */
-    jit_ir_op *Op = Ir_PushOp(Jit, IR_OP_ENTRY);
+    Ir_PushOp(Jit, IR_OP_ENTRY);
     int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR, true);
     if (Index != -1)
     {
         Ir_PushOpLoad(Jit, Index);
     }
-    Ir_PushOp(Jit, IR_OP_RETURN);
 
     /* function end */
-    Op->Entry.StackSize = Storage_GetMaxStackSize(&Jit->Storage);
-    Storage_PopScope(&Jit->Storage);
+    Ir_PushOp(Jit, IR_OP_RETURN);
 }
 
 static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
@@ -1198,7 +1208,7 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
         .Storage = STORAGE_MEM,
         .As.Mem = Storage_AllocateGlobal(&Jit->Storage),
     };
-    Ir_PushOp(Jit, IR_OP_STORE)->StoreDst = Global.As.Mem;
+    Ir_PushOp4(Jit, IR_OP_STORE, Global.As.Mem.Offset);
     Variable->Location = Global;
 }
 
@@ -1301,6 +1311,7 @@ static u32 Jit_Hash(const char *Str, int StrLen)
 
 static void Jit_Reset(jit *Jit, const char *Location, jit_compilation_flags Flags)
 {
+    Jit->IrOpByteCount = 0;
     Jit->ScratchpadLeftByteCount = 0;
     Jit->ScratchpadRightByteCount = 0;
     Jit->Flags = Flags;
@@ -1382,7 +1393,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
 {
     Jit_Reset(Jit, Location, Flags);
 
-    jit_function *Init = DefineFunction(Jit, "init", 4);
+    jit_function *Init = Jit_DefineFunction(Jit, "init", 4);
     {
         do {
             /* definition */
@@ -1403,6 +1414,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
         } while (!Jit->Error.Available && TOK_EOF != NextToken(Jit).Type);
     }
     Init->InsByteCount = Jit_GetEmitterBufferSize(Jit);
+    Init->Location = 0;
     if (Jit->Error.Available)
         goto ErrReturn;
 
@@ -1410,12 +1422,14 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
     printf("============= var table ============\n");
     PrintVars(Jit, 0, Ir_GetDataCount(Jit));
 
+#if 0
     printf("============= instructions ============\n");
     for (int i = 0; i < Ir_GetOpCount(Jit); i++)
     {
         jit_ir_op *Op = Jit->IrOp + i;
         printf("%3d: %s\n", i, Get_OpName(Op->Type));
     }
+#endif
 
     Jit_TranslateIr(Jit);
     Jit_Disassemble(Jit);
