@@ -122,8 +122,9 @@ double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset)
     return 0;
 }
 
-int Storage_GetMaxStackSize(const jit_storage_manager *S)
+void Storage_SetMaxStackCount(jit_storage_manager *S, int Size)
 {
-    return S->MaxStackSize;
+    S->StackSize = Size*S->DataSize;
+    S->MaxStackSize = Size*S->DataSize;
 }
 

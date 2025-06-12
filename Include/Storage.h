@@ -31,11 +31,11 @@ jit_mem Storage_AllocateGlobal(jit_storage_manager *S);
 jit_mem Storage_AllocateConst(jit_storage_manager *S, double Const);
 
 void Storage_DeallocateReg(jit_storage_manager *S, uint Reg);
-int Storage_PushStack(jit_storage_manager *S, int Size); /* returns -StackSize */
-void Storage_PopStack(jit_storage_manager *S, int Size);
+int Storage_PushStack(jit_storage_manager *S, int Count); /* returns -StackSize * DataSize */
+void Storage_PopStack(jit_storage_manager *S, int Count);
 
 double Storage_GetConst(const jit_storage_manager *S, i32 GlobalOffset);
-int Storage_GetMaxStackSize(const jit_storage_manager *S);
+void Storage_SetMaxStackCount(jit_storage_manager *S, int Count);
 
 
 #endif /* JIT_STORAGE_H */

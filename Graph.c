@@ -459,11 +459,18 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
+#if 1
         "f(x) = g(g(x))*h(x*1) + k(1, 2, 3, x, 4, 5, 6) + j(1, 0)\n"
         "h(x) = x*x\n"
         "k(a, b, c, d, e, f, g) = 1\n"
         "j(x, y) = g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))*g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))\n"
         "g(x) = x\n"
+        "e(x) = variable*x\n"
+        "variable = g(10)\n"
+#else
+        "g(x) = x*x\n"
+        "f(x) = g(x)*x\n"
+#endif
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
     if (sResult.ErrMsg)

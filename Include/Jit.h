@@ -36,6 +36,8 @@ typedef struct jit
     def_table Global;
     jit_token Curr, Next;
 
+    i32 PrevVarEnd;
+    i32 PrevFnEnd;
     int IrOpByteCount;
     u8 *IrOp;
     struct jit_ir_data *IrData;
