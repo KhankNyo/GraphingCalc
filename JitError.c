@@ -82,6 +82,13 @@ static void Error_AtStrVA(jit_error *E, const char *Str, int Len, int Line, int 
 }
 
 
+void Error_AtStr(jit_error *E, const char *Str, int Len, int Line, int Offset, const char *Fmt, ...)
+{
+    va_list Args;
+    va_start(Args, Fmt);
+    Error_AtStrVA(E, Str, Len, Line, Offset, Fmt, Args);
+    va_end(Args);
+}
 
 void Error_Reset(jit_error *E)
 {
@@ -99,31 +106,6 @@ void Error_AtToken(jit_error *E, const jit_token *Token, const char *Fmt, ...)
     va_list Args;
     va_start(Args, Fmt);
     Error_AtStrVA(E, Token->Str.Ptr, Token->Str.Len, Token->Line, Token->Offset, Fmt, Args);
-    va_end(Args);
-}
-
-void Error_PushMarker(jit_error *E, const jit_token *Token)
-{
-    ASSERT(E->MarkerCount < sizeof E->Marker, "Error_PushMarker");
-    E->Marker[E->MarkerCount++] = *Token;
-}
-
-void Error_PopMarker(jit_error *E)
-{
-    ASSERT(E->MarkerCount > 0, "Error_PopMarker");
-    E->MarkerCount--;
-}
-
-void Error_WithMarker(jit_error *E, const jit_token *MarkerEnd, const char *Fmt, ...)
-{
-    ASSERT(E->MarkerCount > 0, "Error_WithMarker");
-    const jit_token *MarkerBegin = &E->Marker[E->MarkerCount - 1];
-
-    va_list Args;
-    va_start(Args, Fmt);
-    const char *Start = MarkerBegin->Str.Ptr;
-    const char *End = MarkerEnd->Str.Ptr + MarkerEnd->Str.Len;
-    Error_AtStrVA(E, Start, End - Start, MarkerBegin->Line, MarkerBegin->Offset, Fmt, Args);
     va_end(Args);
 }
 
