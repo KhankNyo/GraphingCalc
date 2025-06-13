@@ -183,7 +183,6 @@ jit_location *Ir_Stack_Push(jit_ir_stack *Stack, const jit_location *Value);
 jit_location *Ir_Stack_Pop(jit_ir_stack *Stack);
 void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count);
 void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage);
-void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount);
 
 
 /*=======================================
@@ -236,11 +235,8 @@ typedef enum jit_ir_op_type
 
 int Ir_Op_GetArgSize(jit_ir_op_type Op);
 
-jit_location Jit_AllocateReg(jit *Jit, jit_ir_stack *Stack);
-jit_reg Jit_CopyToReg(jit *Jit, jit_reg Reg, const jit_location *Location);
 jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, int LocalScopeVarCount);
-jit_reg Jit_ToReg(jit *Jit, jit_ir_stack *Stack, const jit_location *Location);
-jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName);
+jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName, int ArgCount);
 jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen);
 
 

@@ -20,6 +20,15 @@ typedef enum precedence
 static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference);
 
 
+static void Jit_Scratchpad_Reset(jit_scratchpad *S, void *Buffer, int BufferCapacity)
+{
+    *S = (jit_scratchpad) {
+        .Ptr = Buffer,
+        .Capacity = BufferCapacity,
+        .LeftCount = 0,
+        .RightCount = 0,
+    };
+}
 
 static int Jit_Scratchpad_BytesRemain(const jit_scratchpad *S)
 {
@@ -49,7 +58,7 @@ static void *Jit_Scratchpad_PushLeft(jit_scratchpad *S, int DataSize)
 static void *Jit_Scratchpad_PushRight(jit_scratchpad *S, int DataSize)
 {
     ASSERT(DataSize <= Jit_Scratchpad_BytesRemain(S), "bad data size");
-    void *Ptr = (u8 *)Jit_Scratchpad_LeftPtr(S) - DataSize;
+    void *Ptr = (u8 *)Jit_Scratchpad_RightPtr(S) - DataSize;
     S->RightCount += DataSize;
     return Ptr;
 }
@@ -449,7 +458,7 @@ int Ir_Op_GetArgSize(jit_ir_op_type Op)
 static u8 *Ir_Op_PushAndReserveArgSize(jit *Jit, jit_ir_op_type Type, int ArgSize)
 {
     Jit->IrOpByteCount += 1 + ArgSize;
-    u8 *Ptr = Jit_Scratchpad_PushLeft(Jit, 1 + ArgSize);
+    u8 *Ptr = Jit_Scratchpad_PushLeft(&Jit->S, 1 + ArgSize);
     *Ptr = Type;
     return Ptr + 1;
 }
@@ -510,17 +519,17 @@ u8 *Ir_Data_Get(jit_ir_data *Data, i32 Offset)
 static u8 *Ir_Data_PushReserveSize(jit *Jit, jit_ir_data_type Type)
 {
     Jit->IrData.ByteCount += Type + 1;
-    u8 *Ptr = Jit_Scratchpad_PushRight(Jit, Type + 1);
+    u8 *Ptr = Jit_Scratchpad_PushRight(&Jit->S, Type + 1);
     *(Ptr + Type) = Type;
     return Ptr;
 }
 
 static void Ir_PopData(jit *Jit)
 {
-    u8 *Ptr = Jit_Scratchpad_RightPtr(Jit);
+    u8 *Ptr = Jit_Scratchpad_RightPtr(&Jit->S);
     jit_ir_data_type DataType = *Ptr;
     int DataSize = Ir_Data_GetPayloadSize(DataType);
-    Jit_Scratchpad_PopRight(Jit, 1 + DataSize);
+    Jit_Scratchpad_PopRight(&Jit->S, 1 + DataSize);
 }
 
 static int Ir_Data_PushConst(jit *Jit, double Const)
@@ -836,16 +845,31 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
 
 
 
-jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName)
+jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName, int ArgCount)
 {
     def_table_entry *Entry = DefTable_Find(
         &Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION
     );
-    if (!Entry) /* undefined function */
+
+    if (!Entry)
     {
+        Error_AtToken(&Jit->Error, FnName, "Undefined function.");
         return NULL;
     }
-    return &Entry->As.Function;
+
+    /* check param and arg count */
+    jit_function *Function = &Entry->As.Function;
+    if (Entry->As.Function.ParamCount != ArgCount)
+    {
+        const char *Plural = Function->ParamCount > 1? 
+            "arguments" : "argument";
+        Error_AtToken(&Jit->Error, FnName, "Expected %d %s, got %d instead.", 
+            Function->ParamCount, Plural, ArgCount
+        );
+        return NULL;
+    }
+
+    return Function;
 }
 
 jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen)
@@ -872,7 +896,7 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
 
     /* function params */
     Function->ParamCount = 0;
-    Function->ParamStart = Ir_Data_GetSize(Jit);
+    Function->ParamStart = Ir_Data_GetSize(&Jit->IrData);
     if (TOK_RPAREN != NextToken(Jit).Type)
     {
         do {
@@ -1044,19 +1068,20 @@ static void Jit_Reset(jit *Jit, const char *Location, jit_compilation_flags Flag
 {
     Jit->PrevVarEnd = VAR_END_LAST;
     Jit->PrevFnEnd = FN_END_LAST;
-    Jit->IrOpByteCount = 0;
-    Jit->ScratchpadLeftByteCount = 0;
-    Jit->ScratchpadRightByteCount = 0;
     Jit->Flags = Flags;
     Jit->Start = Location; 
     Jit->End = Location;
     Jit->Line = 1;
     Jit->Offset = 1;
 
+    Jit_Scratchpad_Reset(&Jit->S, Jit->S.Ptr, Jit->S.Capacity);
+
     /* ir op array starts from the left and grows rightward in the scratchpad */
-    Jit->IrOp = Jit_Scratchpad_LeftPtr(Jit);
+    Jit->IrOpByteCount = 0;
+    Jit->IrOp = Jit_Scratchpad_LeftPtr(&Jit->S);
     /* ir data array starts from the right and grows leftward in the scratchpad */
-    Jit->IrData = Jit_Scratchpad_RightPtr(Jit);
+    Jit->IrData.ByteCount = 0;
+    Jit->IrData.Ptr = Jit_Scratchpad_RightPtr(&Jit->S);
 
     /* pump the tokenizer */
     Jit->Next = (jit_token) { .Type = TOK_EOF };
@@ -1092,9 +1117,8 @@ uint Jit_Init(
     *Jit = (jit) {
         .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
         .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
-        .ScratchpadPtr = Scratchpad,
-        .ScratchpadCapacity = ScratchpadCapacity,
     };
+    Jit_Scratchpad_Reset(&Jit->S, Scratchpad, ScratchpadCapacity);
     Emitter_Init(&Jit->Emitter, ProgramMemory, ProgramMemCapacity);
     return 0;
 }
@@ -1109,10 +1133,10 @@ static void PrintVars(jit *Jit)
 {
     i32 Offset = 0;
     int i = 0;
-    while (Offset < Ir_Data_GetSize(Jit))
+    while (Offset < Ir_Data_GetSize(&Jit->IrData))
     {
-        jit_ir_data_type Type = Ir_Data_GetType(Jit, Offset);
-        const u8 *Data = Ir_Data_Get(Jit, Offset);
+        jit_ir_data_type Type = Ir_Data_GetType(&Jit->IrData, Offset);
+        const u8 *Data = Ir_Data_Get(&Jit->IrData, Offset);
         switch (Type)
         {
         case IR_DATA_CONST:  
@@ -1165,7 +1189,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
     if (Jit->Error.Available)
         goto ErrReturn;
 
-    printf("IR OK, free mem: %d\n", Jit_Scratchpad_BytesRemain(Jit));
+    printf("IR OK, free mem: %d\n", Jit_Scratchpad_BytesRemain(&Jit->S));
 #if 1
     printf("============= var table ============\n");
     PrintVars(Jit);

@@ -414,31 +414,31 @@ jit_reg Jit_CopyToReg(jit_emitter *Emitter, jit_reg Reg, const jit_location *Loc
     return Reg;
 }
 
-void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
+void Jit_EmitCallArgs(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage, int ArgCount)
 {
     int IrStackCount = Stack->Count;
     ASSERT(ArgCount <= IrStackCount, "arg count");
 
     /* reserve stack space for arguments */
-    Storage_PushStack(&Jit->Storage, ArgCount);
+    Storage_PushStack(Storage, ArgCount);
 
     /* emit arguments */
     for (int i = 0; i < ArgCount; i++)
     {
         jit_location *Location = Ir_Stack_Top(Stack, ArgCount - i - 1);
-        jit_location Arg = TargetEnv_GetArg(i, Jit->Storage.DataSize);
+        jit_location Arg = TargetEnv_GetArg(i, Storage->DataSize);
         switch (Arg.Storage)
         {
         case STORAGE_REG:
         {
-            Jit_CopyToReg(Jit, Arg.As.Reg, Location);
-            Storage_ForceAllocateReg(&Jit->Storage, Arg.As.Reg);
+            Jit_CopyToReg(Emitter, Arg.As.Reg, Location);
+            Storage_ForceAllocateReg(Storage, Arg.As.Reg);
         } break;
         case STORAGE_MEM:
         {
-            jit_reg Tmp = Jit_ToReg(Jit, Stack, Location);
-            Emit_Store(&Jit->Emitter, Tmp, Arg.As.Mem.BaseReg, Arg.As.Mem.Offset);
-            Storage_DeallocateReg(&Jit->Storage, Tmp);
+            jit_reg Tmp = Jit_ToReg(Emitter, Stack, Storage, Location);
+            Emit_Store(Emitter, Tmp, Arg.As.Mem.BaseReg, Arg.As.Mem.Offset);
+            Storage_DeallocateReg(Storage, Tmp);
         } break;
         }
     }
@@ -448,13 +448,11 @@ void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
     /* deallocate argument registers */
     for (int i = 0; i < ArgCount && TargetEnv_IsArgumentInReg(i); i++)
     {
-        jit_reg Reg = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
-        Storage_DeallocateReg(&Jit->Storage, Reg);
+        jit_reg Reg = TargetEnv_GetArg(i, Storage->DataSize).As.Reg;
+        Storage_DeallocateReg(Storage, Reg);
     }
 
-    /* deallocate stack space used for arguments, 
-     * TODO: this is for caller cleanup, how about callee cleanup? */
-    Storage_PopStack(&Jit->Storage, ArgCount);
+    Storage_PopStack(Storage, ArgCount);
 }
 
 
@@ -476,8 +474,8 @@ static u8 *Emitter_TranslateSingleUnit(
 #else
     jit_emitter *Emitter, 
     jit_ir_data *Data, jit_storage_manager *Storage,
-    //jit *Jit,
     jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
+    jit *Jit,
     u8 *IP, const u8 *End,
     jit_ir_op_type BeginOp, jit_ir_op_type EndOp
 #endif
@@ -571,14 +569,14 @@ static u8 *Emitter_TranslateSingleUnit(
                 ParamStart = Fn->ParamStart;
                 ParamCount = Fn->ParamCount;
             }
-            jit_location Location = Ir_Data_GetLocation(Emitter->Jit, IrData, ParamStart, ParamCount);
+            jit_location Location = Ir_Data_GetLocation(Jit, IrData, ParamStart, ParamCount);
             Ir_Stack_Push(Stack, &Location);
         } break;
         case IR_OP_STORE: /* store expr on stack to dst */
         {
             i32 Offset = IR_CONSUME_I32();
 
-            jit_reg Src = Jit_ToReg(Emitter, Stack, Ir_Stack_Pop(Stack));
+            jit_reg Src = Jit_ToReg(Emitter, Stack, Storage, Ir_Stack_Pop(Stack));
             jit_mem Dst = {
                 .BaseReg = TargetEnv_GetGlobalPtrReg(),
                 .Offset = Offset,
@@ -597,26 +595,12 @@ static u8 *Emitter_TranslateSingleUnit(
             i32 ArgCount = IR_CONSUME_I32();
             const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
 
-            const jit_function *Function = Jit_FindFunction(Jit, FnName);
+            const jit_function *Function = Jit_FindFunction(Jit, FnName, ArgCount);
             if (!Function)
-            {
-                Error_AtToken(&Jit->Error, FnName, "Undefined function.");
                 break;
-            }
-
-            /* check param and arg count */
-            if (Function->ParamCount != ArgCount)
-            {
-                const char *Plural = Function->ParamCount > 1? 
-                    "arguments" : "argument";
-                Error_AtToken(&Jit->Error, FnName, "Expected %d %s, got %d instead.", 
-                    Function->ParamCount, Plural, ArgCount
-                );
-                break;
-            }
 
             /* emit the args and call itself */
-            Jit_EmitCallArgs(Stack, Function->ParamCount);
+            Jit_EmitCallArgs(Emitter, Stack, Storage, Function->ParamCount);
             uint CallLocation = Emit_Call(Emitter, Function->Location);
             if (FN_LOCATION_UNDEFINED == Function->Location)
             {
@@ -654,7 +638,7 @@ static u8 *Emitter_TranslateSingleUnit(
 
             jit_location Result = {
                 .Storage = STORAGE_REG,
-                .As.Reg = Jit_ToReg(Jit, Stack, Left),
+                .As.Reg = Jit_ToReg(Emitter, Stack, Storage, Left),
             };
             if (Right->Storage == STORAGE_REG)
             {
@@ -684,7 +668,7 @@ static u8 *Emitter_TranslateSingleUnit(
         {
             /* stack.top = 0 - stack.top */
             jit_location *Value = Ir_Stack_Pop(Stack);
-            jit_location Result = Jit_AllocateReg(Jit, Stack);
+            jit_location Result = Jit_AllocateReg(Emitter, Stack, Storage);
             Emit_LoadZero(Emitter, Result.As.Reg);
             OP(Sub, Result.As.Reg, Value);
             Ir_Stack_Push(Stack, &Result);
@@ -706,7 +690,7 @@ void Emitter_TranslateIr(jit *Jit)
 {
     jit_ir_stack Stack_ = Ir_Stack_Init(Jit);
     jit_ir_stack *Stack = &Stack_;
-    jit_fnref_stack FnRef_ = Ir_FnRef_Init(Jit);
+    jit_fnref_stack FnRef_ = Ir_FnRef_Init(&Jit->S);
     jit_fnref_stack *FnRef = &FnRef_;
 
     int FunctionCallCount;
@@ -715,10 +699,10 @@ void Emitter_TranslateIr(jit *Jit)
     while (IP < InsEnd)
     {
         IP = Emitter_TranslateSingleUnit(
-                &Jit->Emitter,
+            &Jit->Emitter,
+            &Jit->IrData, &Jit->Storage, Stack, FnRef, 
             Jit, 
-            Stack, FnRef, 
-            IP, InsEnd,
+            IP, InsEnd, 
             IR_OP_FN_BEGIN, IR_OP_FN_END
         );
     }
@@ -738,10 +722,10 @@ void Emitter_TranslateIr(jit *Jit)
     while (IP < InsEnd)
     {
         IP = Emitter_TranslateSingleUnit(
-                &Jit->Emitter,
+            &Jit->Emitter,
+            &Jit->IrData, &Jit->Storage, Stack, FnRef, 
             Jit, 
-            Stack, FnRef, 
-            IP, InsEnd,
+            IP, InsEnd, 
             IR_OP_VAR_BEGIN, IR_OP_VAR_END
         );
     }
