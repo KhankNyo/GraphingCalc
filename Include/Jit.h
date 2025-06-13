@@ -5,8 +5,6 @@
 #include "JitError.h"
 #include "DefTable.h"
 #include "Storage.h"
-#include <wchar.h>
-
 
 typedef enum jit_compilation_flags 
 {
@@ -40,16 +38,13 @@ typedef struct jit
     i32 PrevFnEnd;
     int IrOpByteCount;
     u8 *IrOp;
-    int IrDataByteCount;
-    u8 *IrData;
+    jit_ir_data IrData;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;
     jit_error Error;
 
-    u8 *ScratchpadPtr;
-    int ScratchpadLeftByteCount, ScratchpadRightByteCount; 
-    int ScratchpadCapacity;
+    jit_scratchpad S;
 } jit;
 
 /* returns 0 on success, otherwise returns minimum scratch pad memory size */

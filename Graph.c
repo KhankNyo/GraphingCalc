@@ -468,8 +468,8 @@ graph_state Graph_OnEntry(void)
         "e(x) = variable*x\n"
         "variable = g(10)\n"
 #else
-        "g(x) = x*x\n"
-        "f(x) = g(x)*x\n"
+        "f(x) = x + m\n"
+        "m = 10"
 #endif
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);

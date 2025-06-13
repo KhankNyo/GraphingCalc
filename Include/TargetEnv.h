@@ -25,43 +25,37 @@ static inline jit_mem TargetEnv_GetParam(int Index, int DataSize);
 
 /* each platform defines their own emitter */
 typedef struct jit_emitter jit_emitter;
-/* every platform must have jit_generic_emitter as the first member named 'Base', i.e.
- * struct jit_emitter {
- *     jit_emitter Base; 
- *     ... private members 
- * }; */
-typedef struct jit_generic_emitter 
-{
-    u8 *Buffer; 
-    uint BufferSize; 
-    uint BufferCapacity;
-} jit_generic_emitter;
 
 /* common emitter functions */
-uint DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64]);
+int DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64]);
 
-void Emitter_Init(jit_emitter *TargetEnvEmitter, u8 *Buffer, uint BufferCapacity);
+void Emitter_Init(jit_emitter *TargetEnvEmitter, u8 *Buffer, int BufferCapacity);
+int Emitter_GetBufferSize(const jit_emitter *Emitter);
+const u8 *Emitter_GetBuffer(const jit_emitter *Emitter);
 void Emitter_Reset(jit_emitter *TargetEnvEmitter, bool8 EmitFloat32Instructions);
 
-void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);
-void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 DstOffset);
-void Emit_Add(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);
-void Emit_Sub(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);
-void Emit_Mul(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);
-void Emit_Div(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset);
+void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
+void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
+void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 DstOffset);
+void Emit_Add(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
+void Emit_Sub(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
+void Emit_Mul(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
+void Emit_Div(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
 
-void Emit_AddReg(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_SubReg(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_MulReg(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_DivReg(jit_emitter *Emitter, int DstReg, int SrcReg);
-void Emit_LoadZero(jit_emitter *Emitter, int DstReg);
+void Emit_AddReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
+void Emit_SubReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
+void Emit_MulReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
+void Emit_DivReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
+void Emit_LoadZero(jit_emitter *Emitter, jit_reg DstReg);
 
 /* returns the function's location */
 uint Emit_FunctionEntry(jit_emitter *);
 void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize);
 uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
 void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation);
+
+typedef struct jit jit;
+void Emitter_TranslateIr(jit *Jit);
 
 
 /* TARGETENV_<platform name> must be defined via compilation flags */

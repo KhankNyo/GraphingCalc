@@ -68,12 +68,12 @@ static const u8 sLoadSingle64[] = {
 
 static int Emit(jit_emitter *Emitter, int Count, ...)
 {
-    int InstructionOffset = Emitter->Base.BufferSize;
+    int InstructionOffset = Emitter->BufferSize;
     va_list Args;
     va_start(Args, Count);
-    for (int i = 0; i < Count && (uint)Emitter->Base.BufferSize < Emitter->Base.BufferCapacity; i++)
+    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
     {
-        Emitter->Base.Buffer[Emitter->Base.BufferSize++] = va_arg(Args, uint);
+        Emitter->Buffer[Emitter->BufferSize++] = va_arg(Args, uint);
     }
     va_end(Args);
     return InstructionOffset;
@@ -81,10 +81,10 @@ static int Emit(jit_emitter *Emitter, int Count, ...)
 
 static int EmitArray(jit_emitter *Emitter, const u8 Array[], int Count)
 {
-    int InstructionOffset = Emitter->Base.BufferSize;
-    for (int i = 0; i < Count && (uint)Emitter->Base.BufferSize < Emitter->Base.BufferCapacity; i++)
+    int InstructionOffset = Emitter->BufferSize;
+    for (int i = 0; i < Count && (uint)Emitter->BufferSize < Emitter->BufferCapacity; i++)
     {
-        Emitter->Base.Buffer[Emitter->Base.BufferSize++] = Array[i];
+        Emitter->Buffer[Emitter->BufferSize++] = Array[i];
     }
     return InstructionOffset;
 }
@@ -138,14 +138,12 @@ static void Emit_FloatOpcodeReg(jit_emitter *Emitter, u8 Opcode, int DstReg, int
 
 
 
-void Emitter_Init(jit_emitter *Emitter, u8 *Buffer, uint BufferCapacity)
+void Emitter_Init(jit_emitter *Emitter, u8 *Buffer, int BufferCapacity)
 {
     ASSERT(NULL != Emitter, "nullptr");
     *Emitter = (jit_emitter) {
-        .Base = {
-            .Buffer = Buffer, 
-            .BufferCapacity = BufferCapacity,
-        },
+        .Buffer = Buffer, 
+        .BufferCapacity = BufferCapacity,
     };
 }
 
@@ -156,7 +154,7 @@ void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
     STATIC_ASSERT(sizeof sLoadSingle32 == sizeof Emitter->LoadSingle, "unreachable");
     STATIC_ASSERT(sizeof sLoadSingle64 == sizeof Emitter->LoadSingle, "unreachable");
 
-    Emitter->Base.BufferSize = 0;
+    Emitter->BufferSize = 0;
     if (EmitFloat32Instructions)
     {
         Emitter->FloatOpcode = 0xF3;
@@ -173,7 +171,7 @@ void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
 
 
 
-void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg)
+void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg)
 {
     if (DstReg != SrcReg)
     {
@@ -182,7 +180,7 @@ void Emit_Move(jit_emitter *Emitter, int DstReg, int SrcReg)
     }
 }
 
-void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
+void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 SrcOffset)
 {
     /* movq [base + offset], src */
     EmitArray(Emitter, 
@@ -192,7 +190,7 @@ void Emit_Store(jit_emitter *Emitter, int SrcReg, int DstBase, i32 SrcOffset)
     Emit_GenericModRm(Emitter, SrcReg, DstBase, SrcOffset);
 }
 
-void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
+void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
 {
     /* emit it as a store instruction initially */
     uint PrevSize = EmitArray(Emitter, 
@@ -200,18 +198,18 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
         sizeof Emitter->StoreSingle
     );
     Emit_GenericModRm(Emitter, DstReg, SrcBase, SrcOffset);
-    uint InstructionLength = Emitter->Base.BufferSize - PrevSize;
+    uint InstructionLength = Emitter->BufferSize - PrevSize;
 
     /* compared the emitted instruction with the last*/
-    u8 *PrevIns = Emitter->Base.Buffer + PrevSize - InstructionLength;
-    u8 *CurrIns = Emitter->Base.Buffer + PrevSize;
-    if (Emitter->Base.BufferSize >= 2*InstructionLength
+    u8 *PrevIns = Emitter->Buffer + PrevSize - InstructionLength;
+    u8 *CurrIns = Emitter->Buffer + PrevSize;
+    if (Emitter->BufferSize >= 2*InstructionLength
     && MemEqu(PrevIns, CurrIns, InstructionLength))
     {
         /* if matched, 
          * this current instruction was trying to read the value we just stored into the same regsiter, 
          * optimize it out */
-        Emitter->Base.BufferSize -= InstructionLength;
+        Emitter->BufferSize -= InstructionLength;
     }
     else
     {
@@ -222,48 +220,47 @@ void Emit_Load(jit_emitter *Emitter, int DstReg, int SrcBase, i32 SrcOffset)
 }
 
 
-void Emit_Add(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+void Emit_Add(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x58, Dst, Base, Offset);
 }
 
-void Emit_Sub(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+void Emit_Sub(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x5C, Dst, Base, Offset);
 }
 
-void Emit_Mul(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+void Emit_Mul(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x59, Dst, Base, Offset);
 }
 
-void Emit_Div(jit_emitter *Emitter, int Dst, int Base, i32 Offset)
+void Emit_Div(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x5E, Dst, Base, Offset);
 }
 
-
-void Emit_AddReg(jit_emitter *Emitter, int Dst, int Src)
+void Emit_AddReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x58, Dst, Src);
 }
 
-void Emit_SubReg(jit_emitter *Emitter, int Dst, int Src)
+void Emit_SubReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x5C, Dst, Src);
 }
 
-void Emit_MulReg(jit_emitter *Emitter, int Dst, int Src)
+void Emit_MulReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x59, Dst, Src);
 }
 
-void Emit_DivReg(jit_emitter *Emitter, int Dst, int Src)
+void Emit_DivReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x5E, Dst, Src);
 }
 
-void Emit_LoadZero(jit_emitter *Emitter, int DstReg)
+void Emit_LoadZero(jit_emitter *Emitter, jit_reg DstReg)
 {
     /* xorps dst, dst */
     Emit(Emitter, 3, 0x0F, 0x57, MODRM(3, DstReg, DstReg));
@@ -278,7 +275,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter)
      * mov rbp, rsp
      * sub rsp, memsize
      * */
-    while (Emitter->Base.BufferSize % 0x10 != 0)
+    while (Emitter->BufferSize % 0x10 != 0)
     {
         Emit(Emitter, 1, 0x90); /* nop */
     }
@@ -297,7 +294,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter)
 void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
 {
     uint PrologueSize = 1 + 3 + 3 + 4;
-    ASSERT(Location + PrologueSize <= Emitter->Base.BufferSize, "invalid location");
+    ASSERT(Location + PrologueSize <= Emitter->BufferSize, "invalid location");
 
     /* leave 
      * ret 
@@ -307,7 +304,7 @@ void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
     /* patch stack size */
     uint StackSizeLocation = Location + 1 + 3 + 3;
     MemCpy(
-        Emitter->Base.Buffer + StackSizeLocation,
+        Emitter->Buffer + StackSizeLocation,
         &StackSize, 
         sizeof StackSize
     );
@@ -317,7 +314,7 @@ void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
 uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
     /* call rel32 */
-    i32 Rel32 = FunctionLocation - (Emitter->Base.BufferSize + 5);
+    i32 Rel32 = FunctionLocation - (Emitter->BufferSize + 5);
     uint Location = Emit(Emitter, 1, 0xE8);
     EmitArray(Emitter, (u8 *)&Rel32, sizeof Rel32);
     return Location;
@@ -325,11 +322,450 @@ uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 
 void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation)
 {
-    ASSERT(FunctionLocation < Emitter->Base.BufferSize, "bad dst location");
-    ASSERT(CallLocation + 5 <  Emitter->Base.BufferSize, "bad src location");
+    ASSERT(FunctionLocation < Emitter->BufferSize, "bad dst location");
+    ASSERT(CallLocation + 5 <  Emitter->BufferSize, "bad src location");
     i32 Offset = FunctionLocation - (CallLocation + 5);
-    MemCpy(Emitter->Base.Buffer + CallLocation + 1, &Offset, 4);
+    MemCpy(Emitter->Buffer + CallLocation + 1, &Offset, 4);
 }
+
+
+#include "Jit.h"
+
+static jit_location Jit_AllocateStack(jit_storage_manager *Storage)
+{
+    return (jit_location) {
+        .Storage = STORAGE_MEM,
+        .As.Mem = Storage_AllocateStack(Storage),
+    };
+}
+
+
+void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
+{
+    for (int i = 0; i < Stack->Count; i++)
+    {
+        jit_location *Elem = Ir_Stack_Top(Stack, i);
+        switch (Elem->Storage)
+        {
+        case STORAGE_MEM: break; /* already in memory, nothing to do */
+        case STORAGE_REG:
+        {
+            jit_reg Src = Elem->As.Reg;
+            jit_location Location = Jit_AllocateStack(Storage);
+            Emit_Store(Emitter, Src, Location.As.Mem.BaseReg, Location.As.Mem.Offset);
+            Storage_DeallocateReg(Storage, Src);
+
+            *Elem = Location;
+        } break;
+        }
+    }
+}
+
+
+
+jit_location Jit_AllocateReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
+{
+    jit_location Location = {
+        .Storage = STORAGE_REG,
+        .As.Reg = Storage_TryAllocateReg(Storage),
+    };
+    if (JIT_REG_INVALID == Location.As.Reg)
+    {
+        /* spill stack */
+        Ir_Stack_SpillReg(Emitter, Stack, Storage);
+        Location.As.Reg = Storage_TryAllocateReg(Storage);
+        ASSERT(Location.As.Reg != JIT_REG_INVALID, "unreachable");
+    }
+    return Location;
+}
+
+
+jit_reg Jit_ToReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage, const jit_location *Location)
+{
+    jit_reg Result = -1;
+    switch (Location->Storage)
+    {
+    case STORAGE_REG:
+    {
+        Result = Location->As.Reg;
+    } break;
+    case STORAGE_MEM:
+    {
+        Result = Jit_AllocateReg(Emitter, Stack, Storage).As.Reg;
+        Emit_Load(Emitter, Result, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
+    } break;
+    }
+    return Result;
+}
+
+jit_reg Jit_CopyToReg(jit_emitter *Emitter, jit_reg Reg, const jit_location *Location)
+{
+    switch (Location->Storage)
+    {
+    case STORAGE_MEM:
+    {
+        Emit_Load(Emitter, Reg, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
+    } break;
+    case STORAGE_REG:
+    {
+        Emit_Move(Emitter, Reg, Location->As.Reg);
+    } break;
+    }
+    return Reg;
+}
+
+void Jit_EmitCallArgs(jit_ir_stack *Stack, int ArgCount)
+{
+    int IrStackCount = Stack->Count;
+    ASSERT(ArgCount <= IrStackCount, "arg count");
+
+    /* reserve stack space for arguments */
+    Storage_PushStack(&Jit->Storage, ArgCount);
+
+    /* emit arguments */
+    for (int i = 0; i < ArgCount; i++)
+    {
+        jit_location *Location = Ir_Stack_Top(Stack, ArgCount - i - 1);
+        jit_location Arg = TargetEnv_GetArg(i, Jit->Storage.DataSize);
+        switch (Arg.Storage)
+        {
+        case STORAGE_REG:
+        {
+            Jit_CopyToReg(Jit, Arg.As.Reg, Location);
+            Storage_ForceAllocateReg(&Jit->Storage, Arg.As.Reg);
+        } break;
+        case STORAGE_MEM:
+        {
+            jit_reg Tmp = Jit_ToReg(Jit, Stack, Location);
+            Emit_Store(&Jit->Emitter, Tmp, Arg.As.Mem.BaseReg, Arg.As.Mem.Offset);
+            Storage_DeallocateReg(&Jit->Storage, Tmp);
+        } break;
+        }
+    }
+    /* done emitting actual instructions, pop ir stack */
+    Ir_Stack_PopMultiple(Stack, ArgCount);
+
+    /* deallocate argument registers */
+    for (int i = 0; i < ArgCount && TargetEnv_IsArgumentInReg(i); i++)
+    {
+        jit_reg Reg = TargetEnv_GetArg(i, Jit->Storage.DataSize).As.Reg;
+        Storage_DeallocateReg(&Jit->Storage, Reg);
+    }
+
+    /* deallocate stack space used for arguments, 
+     * TODO: this is for caller cleanup, how about callee cleanup? */
+    Storage_PopStack(&Jit->Storage, ArgCount);
+}
+
+
+
+
+
+
+
+#define IR_CONSUME_BYTE() *IP++
+#define IR_CONSUME_AND_INTERPRET(datatype) ((IP += sizeof(datatype)), (datatype *)(IP - sizeof(datatype)))
+#define IR_CONSUME_I32() *IR_CONSUME_AND_INTERPRET(i32)
+
+static u8 *Emitter_TranslateSingleUnit(
+#if 0
+    jit *Jit, 
+    u8 *IP, 
+    jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
+    jit_ir_op_type BeginOp, jit_ir_op_type EndOp
+#else
+    jit_emitter *Emitter, 
+    jit_ir_data *Data, jit_storage_manager *Storage,
+    //jit *Jit,
+    jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
+    u8 *IP, const u8 *End,
+    jit_ir_op_type BeginOp, jit_ir_op_type EndOp
+#endif
+)
+{
+    while (IP < End && *IP != BeginOp)
+    {
+        jit_ir_op_type Op = IR_CONSUME_BYTE();
+        IP += Ir_Op_GetArgSize(Op);
+    }
+
+    jit_function *Fn = NULL;
+    jit_variable *Var = NULL;
+    i32 EndOffset = 0;
+    jit_ir_op_type Op = -1;
+    while (IP < End && Op != EndOp)
+    {
+        Op = IR_CONSUME_BYTE();
+
+        switch (Op)
+        {
+        case IR_OP_VAR_BEGIN:
+        {
+            Var = *IR_CONSUME_AND_INTERPRET(jit_variable *);
+            Var->InsLocation = Emitter->BufferSize;
+        } break;
+        case IR_OP_VAR_END:
+        {
+            EndOffset = IR_CONSUME_I32();
+            Var->InsByteCount = Emitter->BufferSize - Var->InsLocation;
+
+            Var = NULL;
+        } break;
+        case IR_OP_FN_BEGIN:
+        {
+            Fn = *IR_CONSUME_AND_INTERPRET(jit_function *);
+            ASSERT(Fn, "nullptr");
+
+            Fn->Location = Emit_FunctionEntry(Emitter);
+            ASSERT(Ir_Data_GetSize(Data) >= Fn->ParamStart + Fn->ParamCount, "unreachable");
+
+            /* set parameters to valid location */
+            for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
+            {
+                jit_mem NonVolatileParam = TargetEnv_GetParam(i, Storage->DataSize);
+                jit_reg VolatileParam = TargetEnv_GetArg(i, Storage->DataSize).As.Reg;
+                Emit_Store(Emitter, 
+                    VolatileParam,
+                    NonVolatileParam.BaseReg,
+                    NonVolatileParam.Offset
+                );
+            }
+        } break;
+        case IR_OP_FN_END:
+        {
+            /* offset to next fn */
+            EndOffset = IR_CONSUME_I32();
+
+            /* pop the top of the stack and emit return ins */
+            jit_location *ReturnValue = Ir_Stack_Pop(Stack);
+            Jit_CopyToReg(Emitter, TargetEnv_GetReturnReg(), ReturnValue);
+            /* deallocate return register */
+            if (STORAGE_REG == ReturnValue->Storage)
+            {
+                Storage_DeallocateReg(Storage, ReturnValue->As.Reg);
+            }
+
+            /* emit return */
+            Emit_FunctionExit(Emitter, Fn->Location, Storage->MaxStackSize);
+            Fn->InsByteCount = Emitter->BufferSize - Fn->Location;
+
+            Fn = NULL;
+        } break;
+        case IR_OP_SWAP:
+        {
+            ASSERT(Stack->Count >= 2, "size");
+            /* swap */
+            jit_location *Left = Ir_Stack_Top(Stack, 0);
+            jit_location *Right = Ir_Stack_Top(Stack, 1);
+            SWAP(jit_location, *Left, *Right);
+        } break;
+        case IR_OP_LOAD:
+        {
+            i32 LoadIndex = IR_CONSUME_I32();
+
+            const u8 *IrData = Ir_Data_Get(Data, LoadIndex);
+            int ParamStart = 0;
+            int ParamCount = 0;
+            if (Fn)
+            {
+                ParamStart = Fn->ParamStart;
+                ParamCount = Fn->ParamCount;
+            }
+            jit_location Location = Ir_Data_GetLocation(Emitter->Jit, IrData, ParamStart, ParamCount);
+            Ir_Stack_Push(Stack, &Location);
+        } break;
+        case IR_OP_STORE: /* store expr on stack to dst */
+        {
+            i32 Offset = IR_CONSUME_I32();
+
+            jit_reg Src = Jit_ToReg(Emitter, Stack, Ir_Stack_Pop(Stack));
+            jit_mem Dst = {
+                .BaseReg = TargetEnv_GetGlobalPtrReg(),
+                .Offset = Offset,
+            };
+            Emit_Store(Emitter, Src, Dst.BaseReg, Dst.Offset);
+            Storage_DeallocateReg(Storage, Src);
+        } break;
+        case IR_OP_CALL_ARG_START:
+        {
+            /* make all previous location on the stack a memory location */
+            Ir_Stack_SpillReg(Emitter, Stack, Storage);
+        } break;
+        case IR_OP_CALL:
+        {
+            /* get args */
+            i32 ArgCount = IR_CONSUME_I32();
+            const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
+
+            const jit_function *Function = Jit_FindFunction(Jit, FnName);
+            if (!Function)
+            {
+                Error_AtToken(&Jit->Error, FnName, "Undefined function.");
+                break;
+            }
+
+            /* check param and arg count */
+            if (Function->ParamCount != ArgCount)
+            {
+                const char *Plural = Function->ParamCount > 1? 
+                    "arguments" : "argument";
+                Error_AtToken(&Jit->Error, FnName, "Expected %d %s, got %d instead.", 
+                    Function->ParamCount, Plural, ArgCount
+                );
+                break;
+            }
+
+            /* emit the args and call itself */
+            Jit_EmitCallArgs(Stack, Function->ParamCount);
+            uint CallLocation = Emit_Call(Emitter, Function->Location);
+            if (FN_LOCATION_UNDEFINED == Function->Location)
+            {
+                Ir_FnRef_Push(FnRef, Function, CallLocation);
+            }
+
+            /* return */
+            Storage_ForceAllocateReg(Storage, TargetEnv_GetReturnReg());
+            jit_location Result = {
+                .Storage = STORAGE_REG, 
+                .As.Reg = TargetEnv_GetReturnReg(),
+            };
+
+            /* push return value on the stack */
+            Ir_Stack_Push(Stack, &Result);
+        } break;
+        case IR_OP_ADD:
+        case IR_OP_SUB:
+        case IR_OP_MUL:
+        case IR_OP_DIV:
+        case IR_OP_LESS:            
+        case IR_OP_GREATER:         
+        case IR_OP_GREATER_EQUAL:   
+        case IR_OP_LESS_EQUAL:      
+        {
+            jit_location *Right = Ir_Stack_Pop(Stack);
+            jit_location *Left = Ir_Stack_Pop(Stack);
+
+            /* if commutative and right was in reg first, swap operands */
+            if ((IR_OP_ADD == Op || IR_OP_MUL == Op)
+            && STORAGE_REG == Right->Storage)
+            {
+                SWAP(jit_location *, Left, Right);
+            }
+
+            jit_location Result = {
+                .Storage = STORAGE_REG,
+                .As.Reg = Jit_ToReg(Jit, Stack, Left),
+            };
+            if (Right->Storage == STORAGE_REG)
+            {
+                Storage_DeallocateReg(Storage, Right->As.Reg);
+            }
+
+#define OP(op_name, left_reg, right_expr) do {\
+    if (STORAGE_MEM == (right_expr)->Storage)\
+        Emit_ ## op_name (Emitter, left_reg, (right_expr)->As.Mem.BaseReg, (right_expr)->As.Mem.Offset);\
+    else Emit_ ## op_name ## Reg(Emitter, left_reg, (right_expr)->As.Reg);\
+} while (0)
+            switch (Op)
+            {
+            case IR_OP_ADD: OP(Add, Result.As.Reg, Right); break;
+            case IR_OP_SUB: OP(Sub, Result.As.Reg, Right); break;
+            case IR_OP_MUL: OP(Mul, Result.As.Reg, Right); break;
+            case IR_OP_DIV: OP(Div, Result.As.Reg, Right); break;
+            default: 
+            {
+                UNREACHABLE();
+            } break;
+            }
+
+            Ir_Stack_Push(Stack, &Result);
+        } break;
+        case IR_OP_NEG:
+        {
+            /* stack.top = 0 - stack.top */
+            jit_location *Value = Ir_Stack_Pop(Stack);
+            jit_location Result = Jit_AllocateReg(Jit, Stack);
+            Emit_LoadZero(Emitter, Result.As.Reg);
+            OP(Sub, Result.As.Reg, Value);
+            Ir_Stack_Push(Stack, &Result);
+
+            if (Value->Storage == STORAGE_REG)
+            {
+                Storage_DeallocateReg(Storage, Value->As.Reg);
+            }
+        } break;
+        }
+#undef OP
+    }
+
+    return IP + EndOffset;
+}
+
+
+void Emitter_TranslateIr(jit *Jit)
+{
+    jit_ir_stack Stack_ = Ir_Stack_Init(Jit);
+    jit_ir_stack *Stack = &Stack_;
+    jit_fnref_stack FnRef_ = Ir_FnRef_Init(Jit);
+    jit_fnref_stack *FnRef = &FnRef_;
+
+    int FunctionCallCount;
+    u8 *IP = Jit->IrOp;
+    const u8 *InsEnd = IP + Jit->IrOpByteCount;
+    while (IP < InsEnd)
+    {
+        IP = Emitter_TranslateSingleUnit(
+                &Jit->Emitter,
+            Jit, 
+            Stack, FnRef, 
+            IP, InsEnd,
+            IR_OP_FN_BEGIN, IR_OP_FN_END
+        );
+    }
+    /* patch function calls */
+    FunctionCallCount = Ir_FnRef_Count(FnRef);
+    for (int i = 0; i < FunctionCallCount; i++)
+    {
+        jit_fnref *Ref = Ir_FnRef_Pop(FnRef);
+        ASSERT(Ref->Function, "nullptr");
+        Emitter_PatchCall(&Jit->Emitter, Ref->Location, Ref->Function->Location);
+    }
+
+    jit_function *Init = Jit_DefineFunction(Jit, "init", 4);
+    Storage_SetMaxStackCount(&Jit->Storage, 0);
+    Init->Location = Emit_FunctionEntry(&Jit->Emitter);
+    IP = Jit->IrOp;
+    while (IP < InsEnd)
+    {
+        IP = Emitter_TranslateSingleUnit(
+                &Jit->Emitter,
+            Jit, 
+            Stack, FnRef, 
+            IP, InsEnd,
+            IR_OP_VAR_BEGIN, IR_OP_VAR_END
+        );
+    }
+    Emit_FunctionExit(&Jit->Emitter, Init->Location, Jit->Storage.MaxStackSize);
+    Init->InsByteCount = Jit->Emitter.BufferSize - Init->Location;
+}
+
+
+int Emitter_GetBufferSize(const jit_emitter *Emitter)
+{
+    return Emitter->BufferSize;
+}
+
+const u8 *Emitter_GetBuffer(const jit_emitter *Emitter)
+{
+    return Emitter->Buffer;
+}
+
+
+
+
+/* ======================================== */
+/*              Disassembler                */
+/* ======================================== */
 
 
 #define PEEK(p_dd, offset) ((p_dd)->InstructionSize + (offset) < (p_dd)->MemoryCapacity\
@@ -462,7 +898,7 @@ static void X64DisasmModRM(disasm_data *Data, disasm_modrm_type Type, const char
 }
 
 
-uint DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64])
+int DisasmSingleInstruction(u64 Addr, const u8 *Memory, int MemorySize, char ResultBuffer[64])
 {
     ASSERT(MemorySize > 0, "bad memory size");
     disasm_data Disasm = {

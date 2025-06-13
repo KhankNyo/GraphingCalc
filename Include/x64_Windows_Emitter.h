@@ -2,12 +2,13 @@
 #define X64_WINDOWS_EMITTER_H
 
 
-#include "TargetEnv.h"
-
+#include "Common.h"
 
 typedef struct jit_emitter 
 {
-    jit_generic_emitter Base;
+    u8 *Buffer; 
+    uint BufferSize; 
+    uint BufferCapacity;
 
     /* members below should not be accessed directly */
     u8 StoreSingle[3];
