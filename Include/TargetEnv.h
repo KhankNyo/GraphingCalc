@@ -34,27 +34,6 @@ int Emitter_GetBufferSize(const jit_emitter *Emitter);
 const u8 *Emitter_GetBuffer(const jit_emitter *Emitter);
 void Emitter_Reset(jit_emitter *TargetEnvEmitter, bool8 EmitFloat32Instructions);
 
-void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
-void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
-void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 DstOffset);
-void Emit_Add(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
-void Emit_Sub(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
-void Emit_Mul(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
-void Emit_Div(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset);
-
-void Emit_AddReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
-void Emit_SubReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
-void Emit_MulReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
-void Emit_DivReg(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg);
-void Emit_LoadZero(jit_emitter *Emitter, jit_reg DstReg);
-
-/* returns the function's location */
-uint Emit_FunctionEntry(jit_emitter *);
-void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize);
-uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation);
-void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation);
-
-typedef struct jit jit;
 void Emitter_TranslateIr(jit *Jit);
 
 

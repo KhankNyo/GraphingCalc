@@ -38,7 +38,7 @@ typedef struct jit
     i32 PrevFnEnd;
     int IrOpByteCount;
     u8 *IrOp;
-    jit_ir_data IrData;
+    jit_ir_data_manager IrData;
 
     jit_emitter Emitter;
     jit_storage_manager Storage;

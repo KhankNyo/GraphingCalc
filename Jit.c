@@ -419,35 +419,35 @@ int Ir_Op_GetArgSize(jit_ir_op_type Op)
 {
     switch (Op)
     {
-    case IR_OP_LESS:            /* Instruction(1) */
-    case IR_OP_GREATER:         /* Instruction(1) */
-    case IR_OP_GREATER_EQUAL:   /* Instruction(1) */
-    case IR_OP_LESS_EQUAL:      /* Instruction(1) */
-    case IR_OP_ADD:             /* Instruction(1) */
-    case IR_OP_SUB:             /* Instruction(1) */
-    case IR_OP_MUL:             /* Instruction(1) */
-    case IR_OP_DIV:             /* Instruction(1) */
-    case IR_OP_NEG:             /* Instruction(1) */
-    case IR_OP_CALL_ARG_START:  /* Instruction(1) */
-    case IR_OP_SWAP:            /* Instruction(1) */
+    case IR_OP_LESS:           /* Instruction(1) */
+    case IR_OP_GREATER:        /* Instruction(1) */
+    case IR_OP_GREATER_EQUAL:  /* Instruction(1) */
+    case IR_OP_LESS_EQUAL:     /* Instruction(1) */
+    case IR_OP_ADD:            /* Instruction(1) */
+    case IR_OP_SUB:            /* Instruction(1) */
+    case IR_OP_MUL:            /* Instruction(1) */
+    case IR_OP_DIV:            /* Instruction(1) */
+    case IR_OP_NEG:            /* Instruction(1) */
+    case IR_OP_CALL_ARG_START: /* Instruction(1) */
+    case IR_OP_SWAP:           /* Instruction(1) */
     {
         return 0;
     } break;
-    case IR_OP_FN_END:          /* Instruction(1) + Offset(4) */
-    case IR_OP_VAR_END:         /* Instruction(1) + Offset(4) */
-    case IR_OP_STORE:           /* Instruction(1) + Offset(4) */
-    case IR_OP_LOAD:            /* Instruction(1) + LoadIndex(4) */
+    case IR_OP_FN_END:         /* Instruction(1) + Offset(4) */
+    case IR_OP_VAR_END:        /* Instruction(1) + Offset(4) */
+    case IR_OP_STORE:          /* Instruction(1) + Offset(4) */
+    case IR_OP_LOAD:           /* Instruction(1) + LoadIndex(4) */
     {
         return 4;
     } break;
-    case IR_OP_VAR_BEGIN:       /* Instruction(1) + (jit_variable *)(sizeof(ptr))*/
-    case IR_OP_FN_BEGIN:        /* Instruction(1) + (jit_function *)(sizeof(ptr)) */
+    case IR_OP_VAR_BEGIN:      /* Instruction(1) + (jit_variable *)(sizeof(ptr))*/
+    case IR_OP_FN_BEGIN:       /* Instruction(1) + (jit_function *)(sizeof(ptr)) */
     {
         return sizeof(void *);
     } break;
-    case IR_OP_CALL:            /* Instruction(1) + ArgCount(4) + jit_token(sizeof(jit_token)) */
+    case IR_OP_CALL:           /* Instruction(1) + FnNamePtr(8) + FnNameLen(4) + FnNameLine(4) + FnNameOffset(4) + ArgCount(4)  */
     {
-        return 4 + sizeof(jit_token);
+        return sizeof(const char *) + 4*sizeof(i32);
     } break;
     }
     UNREACHABLE();
@@ -475,9 +475,19 @@ static void Ir_Op_PushOp4(jit *Jit, jit_ir_op_type Type, i32 Arg)
 }
 static void Ir_Op_PushCall(jit *Jit, i32 ArgCount, const jit_token *FnName)
 {
-    u8 *ArgPtr = Ir_Op_PushAndReserveArgSize(Jit, IR_OP_CALL, sizeof(i32) + sizeof(jit_token));
+    u8 *ArgPtr = Ir_Op_PushAndReserveArgSize(Jit, IR_OP_CALL,
+        Ir_Op_GetArgSize(IR_OP_CALL)
+    );
+#if 0
     MemCpy(ArgPtr, &ArgCount, sizeof(i32));
     MemCpy(ArgPtr + sizeof(i32), FnName, sizeof(jit_token));
+#else
+    MemCpy(ArgPtr, &FnName->Str.Ptr, sizeof(const char *));
+    MemCpy(ArgPtr + 8, &FnName->Str.Len, 4);
+    MemCpy(ArgPtr + 8 + 4, &FnName->Line, 4);
+    MemCpy(ArgPtr + 8 + 2*4, &FnName->Offset, 4);
+    MemCpy(ArgPtr + 8 + 3*4, &ArgCount, 4);
+#endif
 }
 static void Ir_Op_PushOpPtr(jit *Jit, jit_ir_op_type Op, const void *Ptr)
 {
@@ -501,111 +511,150 @@ static void Ir_Op_PatchOp4(jit *Jit, int Location, i32 Arg)
 
 
 
-
-int Ir_Data_GetSize(const jit_ir_data *Data)
-{
-    return Data->ByteCount;
-}
-
-u8 *Ir_Data_Get(jit_ir_data *Data, i32 Offset)
-{
-    ASSERT(Data->ByteCount > Offset, "Invalid Offset");
-    u8 *DataPtr = Data->Ptr - Offset - 1;
-    return DataPtr;
-}
-
-
 /* returns pointer to payload space */
-static u8 *Ir_Data_PushReserveSize(jit *Jit, jit_ir_data_type Type)
+static u8 *Ir_Data_PushReserveSize(jit_ir_data_manager *D, jit_ir_data_type Type)
 {
-    Jit->IrData.ByteCount += Type + 1;
-    u8 *Ptr = Jit_Scratchpad_PushRight(&Jit->S, Type + 1);
-    *(Ptr + Type) = Type;
-    return Ptr;
+    int DataSize = Type + 1;
+    D->ByteCount += DataSize;
+    u8 *Ptr = Jit_Scratchpad_PushRight(D->S, DataSize);
+    *(Ptr + 0) = Type;
+    return Ptr + 1;
 }
 
-static void Ir_PopData(jit *Jit)
+static void Ir_PopData(jit_ir_data_manager *D)
 {
-    u8 *Ptr = Jit_Scratchpad_RightPtr(&Jit->S);
+    u8 *Ptr = Jit_Scratchpad_RightPtr(D->S);
     jit_ir_data_type DataType = *Ptr;
-    int DataSize = Ir_Data_GetPayloadSize(DataType);
-    Jit_Scratchpad_PopRight(&Jit->S, 1 + DataSize);
+    int DataSize = DataType + 1;
+    Jit_Scratchpad_PopRight(D->S, DataSize);
+    D->ByteCount -= DataSize;
 }
 
-static int Ir_Data_PushConst(jit *Jit, double Const)
+static int Ir_PushConstData(jit_ir_data_manager *D, double Const)
 {
-    int Index = Ir_Data_GetSize(&Jit->IrData);
-    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_CONST);
+    u8 *Ptr = Ir_Data_PushReserveSize(D, IR_DATA_CONST);
+    int Index = D->ByteCount;
     MemCpy(Ptr, &Const, sizeof(Const));
     return Index;
 }
 
-static int Ir_Data_PushRef(jit *Jit, const jit_token *VarName)
+static int Ir_PushRefData(jit_ir_data_manager *D, const jit_token *VarName)
 {
-    int Count = Ir_Data_GetSize(&Jit->IrData);
-    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_VARREF);
+    u8 *Ptr = Ir_Data_PushReserveSize(D, IR_DATA_VARREF);
+    int Index = D->ByteCount;
 
-    jit_token_skinny Token = {
-        .Str = VarName->Str.Ptr,
-        .StrLen = VarName->Str.Len,
-        .Line = VarName->Line,
-        .Offset = VarName->Offset,
-        .Type = VarName->Type,
-    };
-    MemCpy(Ptr, &Token, sizeof(Token));
-    return Count;
+    i32 StrBegin = VarName->Str.Ptr - D->SrcBegin;
+    i32 StrLen = VarName->Str.Len;
+    i32 Line = VarName->Line;
+    i32 Offset = VarName->Offset;
+    MemCpy(Ptr + 0, &StrBegin, 4);
+    MemCpy(Ptr + 4, &StrLen, 4);
+    MemCpy(Ptr + 8, &Line, 4);
+    MemCpy(Ptr + 12, &Offset, 4);
+    return Index;
 }
 
-static int Ir_Data_PushParam(jit *Jit, strview VarName, i32 ParamIndex)
+static int Ir_PushParamData(jit_ir_data_manager *D, strview VarName, i32 ParamIndex, u8 DataSize)
 {
-    int Count = Ir_Data_GetSize(&Jit->IrData);
-    u8 *Ptr = Ir_Data_PushReserveSize(Jit, IR_DATA_PARAM);
-    jit_ir_data_param Param = {
-        .Str = VarName.Ptr,
-        .StrLen = VarName.Len,
-        .Index = ParamIndex,
-    };
-    MemCpy(Ptr, &Param, sizeof Param);
-    return Count;
+    u8 *Ptr = Ir_Data_PushReserveSize(D, IR_DATA_PARAM);
+    int Index = D->ByteCount;
+    i32 StrBegin = VarName.Ptr - D->SrcBegin;
+    i32 StrLen = VarName.Len;
+    MemCpy(Ptr + 0, &StrBegin, 4);
+    MemCpy(Ptr + 4, &StrLen, 4);
+    MemCpy(Ptr + 8, &ParamIndex, 4);
+    MemCpy(Ptr + 12, &DataSize, 1);
+    return Index;
 }
 
-static jit_location Ir_Data_GetParamLocation(const jit *Jit, const u8 *Data)
+
+static u8 *Ir_GetDataTypePtr(jit_ir_data_manager *D, i32 Offset)
 {
-    jit_ir_data_param Param;
-    Ir_Data_GetPayload(Data, &Param);
-    return (jit_location) {
-        .Storage = STORAGE_MEM,
-        .As.Mem = TargetEnv_GetParam(Param.Index, Jit->Storage.DataSize),
+    ASSERT(Offset <= D->ByteCount, "bad offset");
+    u8 *DataTypePtr = D->Ptr - Offset;
+    return DataTypePtr;
+}
+
+jit_ir_data Ir_GetData(jit_ir_data_manager *D, i32 Offset)
+{
+    ASSERT(Offset <= D->ByteCount, "Invalid Offset to type");
+    ASSERT(Offset > 0, "Invalid Offset to type");
+
+    u8 *DataTypePtr = Ir_GetDataTypePtr(D, Offset);
+    jit_ir_data Data = {
+        .Type = *DataTypePtr,
     };
+    switch ((jit_ir_data_type)*DataTypePtr)
+    {
+    case IR_DATA_CONST:
+    {
+        MemCpy(&Data.As.Const, DataTypePtr + 1, sizeof(double));
+    } break;
+    case IR_DATA_PARAM:
+    {
+        i32 StrBegin, StrLen, ParamIndex;
+        u8 DataSize;
+        MemCpy(&StrBegin,   DataTypePtr + 1, 4);
+        MemCpy(&StrLen,     DataTypePtr + 1 + 4, 4);
+        MemCpy(&ParamIndex, DataTypePtr + 1 + 8, 4);
+        MemCpy(&DataSize,   DataTypePtr + 1 + 12, 1);
+        Data.As.Param.Str = D->SrcBegin + StrBegin;
+        Data.As.Param.StrLen = StrLen;
+        Data.As.Param.Location = (jit_location) {
+            .Storage = STORAGE_MEM,
+            .As.Mem = TargetEnv_GetParam(ParamIndex, DataSize),
+        };
+    } break;
+    case IR_DATA_VARREF:
+    {
+        i32 StrBegin, StrLen, Line, Offset;
+        MemCpy(&StrBegin,   DataTypePtr + 1, 4);
+        MemCpy(&StrLen,     DataTypePtr + 1 + 4, 4);
+        MemCpy(&Line,       DataTypePtr + 1 + 8, 4);
+        MemCpy(&Offset,     DataTypePtr + 1 + 12, 4);
+        Data.As.VarRef.Str = D->SrcBegin + StrBegin;
+        Data.As.VarRef.StrLen = StrLen;
+        Data.As.VarRef.Line = Line;
+        Data.As.VarRef.Offset = Offset;
+    } break;
+    default:
+    {
+        UNREACHABLE();
+    } break;
+    }
+    return Data;
+}
+
+static i32 Ir_GetNextDataOffset(jit_ir_data_manager *D, i32 CurrentOffset)
+{
+    ASSERT(CurrentOffset <= D->ByteCount, "bad offset");
+    ASSERT(CurrentOffset > 0, "bad offset");
+    return CurrentOffset - ((i32)(i8)*Ir_GetDataTypePtr(D, CurrentOffset) + 1);
 }
 
 static bool8 Jit_FindVariable(
     jit *Jit, 
     const char *Str, int Len,
     int LocalScopeBase, int LocalScopeVarCount, 
-    jit_location *VarLocation)
+    jit_location *OutVarLocation)
 {
     /* search local scope if provided */
     i32 DataOffset = LocalScopeBase;
     for (int i = 0; i < LocalScopeVarCount; i++)
     {
-        u8 *Data = Ir_Data_Get(&Jit->IrData, DataOffset);
-        jit_ir_data_type Type = *Data;
-        ASSERT(IR_DATA_PARAM == Type, "unreachable");
-        jit_ir_data_param Param; 
-        Ir_Data_GetPayload(Data, &Param);
+        jit_ir_data Data = Ir_GetData(&Jit->IrData, DataOffset);
+        ASSERT(IR_DATA_PARAM == Data.Type, "unreachable");
 
-        if (Len == Param.StrLen
-        && StrEqu(Str, Param.Str, Len))
+        if (Len == Data.As.Param.StrLen && StrEqu(Str, Data.As.Param.Str, Len))
         {
-            if (NULL != VarLocation)
+            if (NULL != OutVarLocation)
             {
-                *VarLocation = Ir_Data_GetParamLocation(Jit, Data);
+                *OutVarLocation = Data.As.Param.Location; 
             }
             return true;
         }
 
-        DataOffset += 1 + Ir_Data_GetPayloadSize(Type);
+        DataOffset = Ir_GetNextDataOffset(&Jit->IrData, DataOffset);
     }
 
     /* failed local scope search, switch to global */
@@ -614,39 +663,41 @@ static bool8 Jit_FindVariable(
     {
         return false;
     }
-    if (NULL != VarLocation)
+    if (NULL != OutVarLocation)
     {
-        *VarLocation = Entry->As.Variable.Location;
+        *OutVarLocation = Entry->As.Variable.Location;
     }
     return true;
 }
 
-jit_location Ir_Data_GetLocation(jit *Jit, const u8 *Data, int LocalScopeBase, int LocalScopeVarCount)
+jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalScopeBase, int LocalScopeVarCount)
 {
     jit_location Result = { 0 };
-    jit_ir_data_type Type = *Data;
-    switch (Type)
+    switch (Data->Type)
     {
     case IR_DATA_CONST:
     {
-        double Const;
-        Ir_Data_GetPayload(Data, &Const);
         Result.Storage = STORAGE_MEM;
-        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Const);
+        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
     } break;
     case IR_DATA_VARREF:
     {
-        jit_token_skinny Name;
-        Ir_Data_GetPayload(Data, &Name);
-        if (!Jit_FindVariable(Jit, Name.Str, Name.StrLen, LocalScopeBase, LocalScopeVarCount, &Result))
+        const char *Str = Data->As.VarRef.Str;
+        i32 StrLen = Data->As.VarRef.StrLen;
+        i32 Line = Data->As.VarRef.Line;
+        i32 Offset = Data->As.VarRef.Offset;
+        if (!Jit_FindVariable(Jit, Str, StrLen, LocalScopeBase, LocalScopeVarCount, &Result))
         {
-            Error_AtStr(&Jit->Error, Name.Str, Name.StrLen, Name.Line, Name.Offset, "Undefined variable.");
+            Error_AtStr(&Jit->Error, Str, StrLen, Line, Offset, "Undefined variable.");
         }
-        ASSERT(Result.Storage == STORAGE_MEM, "unreachable");
     } break;
     case IR_DATA_PARAM:
     {
-        Result = Ir_Data_GetParamLocation(Jit, Data);
+        Result = Data->As.Param.Location;
+    } break;
+    default:
+    {
+        UNREACHABLE();
     } break;
     }
     return Result;
@@ -678,13 +729,12 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         }
 
         /* negate const */
-        u8 *Data = Ir_Data_Get(&Jit->IrData, DataIndex);
-        if (IR_DATA_CONST == *Data)
+        jit_ir_data Data = Ir_GetData(&Jit->IrData, DataIndex);
+        if (IR_DATA_CONST == Data.Type)
         {
-            double Const;
-            Ir_Data_GetPayload(Data, &Const);
-            Const = -Const;
-            Ir_Data_SetPayload(Data, &Const);
+            double Negated = -Data.As.Const;
+            Ir_PopData(&Jit->IrData);
+            DataIndex = Ir_PushConstData(&Jit->IrData, Negated);
         }
         /* value is not a const, load it onto the ir stack and negate it */
         else
@@ -696,7 +746,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
     } break; 
     case TOK_NUMBER: /* number */
     {
-        DataIndex = Ir_Data_PushConst(Jit, Token.As.Number);
+        DataIndex = Ir_PushConstData(&Jit->IrData, Token.As.Number);
     } break;
     case TOK_LPAREN: /* (expr) */
     {
@@ -739,7 +789,7 @@ static int Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
                 Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
                 break;
             }
-            DataIndex = Ir_Data_PushRef(Jit, &Token);
+            DataIndex = Ir_PushRefData(&Jit->IrData, &Token);
         }
     } break;
     default:
@@ -775,66 +825,66 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
         jit_token_type Oper = ConsumeToken(Jit).Type;
         int Right = Jit_Ir_CompileExpr(Jit, PrecedenceOf(Oper) + 1, AllowForwardReference);
 
-        /* const expr, evaluate data now */
-        if (Left != -1 && Right != -1 
-        && IR_DATA_CONST == Ir_Data_GetType(&Jit->IrData, Left) 
-        && IR_DATA_CONST == Ir_Data_GetType(&Jit->IrData, Right))
+        if (Left != -1 && Right != -1)
         {
-            ASSERT(Left == Ir_Data_GetSize(&Jit->IrData) - 2, "");
-            ASSERT(Right == Ir_Data_GetSize(&Jit->IrData) - 1, "");
+            jit_ir_data LeftData = Ir_GetData(&Jit->IrData, Left);
+            jit_ir_data RightData = Ir_GetData(&Jit->IrData, Right);
+            /* const expr, evaluate data now */
+            if (IR_DATA_CONST == LeftData.Type
+            && IR_DATA_CONST == RightData.Type)
+            {
+                double ConstLeft = LeftData.As.Const;
+                double ConstRight = RightData.As.Const;
+                double Result = 0;
+                switch (Oper)
+                {
+                case TOK_PLUS:          Result = ConstLeft + ConstRight; break;
+                case TOK_MINUS:         Result = ConstLeft - ConstRight; break;
+                case TOK_STAR:          Result = ConstLeft * ConstRight; break;
+                case TOK_SLASH:         Result = ConstLeft / ConstRight; break;
+                case TOK_LESS:          Result = ConstLeft < ConstRight; break;
+                case TOK_LESS_EQUAL:    Result = ConstLeft <= ConstRight; break;
+                case TOK_GREATER:       Result = ConstLeft > ConstRight; break;
+                case TOK_GREATER_EQUAL: Result = ConstLeft >= ConstRight; break;
+                default:
+                {
+                    UNREACHABLE();
+                } break;
+                }
+                Ir_PopData(&Jit->IrData);
+                Ir_PopData(&Jit->IrData);
+                Left = Ir_PushConstData(&Jit->IrData, Result);
 
-            double ConstLeft, ConstRight;
-            u8 *LeftPtr = Ir_Data_Get(&Jit->IrData, Left);
-            u8 *RightPtr = Ir_Data_Get(&Jit->IrData, Left);
-            Ir_Data_GetPayload(LeftPtr, &ConstLeft);
-            Ir_Data_GetPayload(RightPtr, &ConstRight);
-            switch (Oper)
-            {
-            case TOK_PLUS:          ConstLeft += ConstRight; break;
-            case TOK_MINUS:         ConstLeft -= ConstRight; break;
-            case TOK_STAR:          ConstLeft *= ConstRight; break;
-            case TOK_SLASH:         ConstLeft /= ConstRight; break;
-            case TOK_LESS:          ConstLeft = ConstLeft < ConstRight; break;
-            case TOK_LESS_EQUAL:    ConstLeft = ConstLeft <= ConstRight; break;
-            case TOK_GREATER:       ConstLeft = ConstLeft > ConstRight; break;
-            case TOK_GREATER_EQUAL: ConstLeft = ConstLeft >= ConstRight; break;
-            default:
-            {
-                UNREACHABLE();
-            } break;
+                continue;
             }
-            Ir_Data_SetPayload(LeftPtr, &ConstLeft);
-            Ir_PopData(Jit);
-            Left = Ir_Data_GetSize(&Jit->IrData) - 1;
+            /* otherwise, data evaluation is deferred to run time (ir stack) */
         }
-        /* data evaluation is deferred to run time (ir stack) */
-        else 
+        /* otherwise, data evaluation is deferred to run time (ir stack) */
+
+        if (Left != -1)
+            Ir_Op_PushLoad(Jit, Left);
+        if (Right != -1)
+            Ir_Op_PushLoad(Jit, Right);
+        /* emit swap if Right operand was in the data array first */
+        if (Left != -1 && -1 == Right)
+            Ir_Op_Push(Jit, IR_OP_SWAP);
+
+        switch (Oper)
         {
-            if (Left != -1)
-                Ir_Op_PushLoad(Jit, Left);
-            if (Right != -1)
-                Ir_Op_PushLoad(Jit, Right);
-            /* emit swap if Right operand was in the data arary first */
-            if (Left != -1 && -1 == Right)
-                Ir_Op_Push(Jit, IR_OP_SWAP);
-
-            switch (Oper)
-            {
-            case TOK_PLUS:          Ir_Op_Push(Jit, IR_OP_ADD); break;
-            case TOK_MINUS:         Ir_Op_Push(Jit, IR_OP_SUB); break;
-            case TOK_STAR:          Ir_Op_Push(Jit, IR_OP_MUL); break;
-            case TOK_SLASH:         Ir_Op_Push(Jit, IR_OP_DIV); break;
-            case TOK_LESS:          Ir_Op_Push(Jit, IR_OP_LESS); break;
-            case TOK_LESS_EQUAL:    Ir_Op_Push(Jit, IR_OP_LESS_EQUAL); break;
-            case TOK_GREATER:       Ir_Op_Push(Jit, IR_OP_GREATER); break;
-            case TOK_GREATER_EQUAL: Ir_Op_Push(Jit, IR_OP_GREATER_EQUAL); break;
-            default:
-            {
-                UNREACHABLE();
-            } break;
-            }
-            Left = -1;
+        case TOK_PLUS:          Ir_Op_Push(Jit, IR_OP_ADD); break;
+        case TOK_MINUS:         Ir_Op_Push(Jit, IR_OP_SUB); break;
+        case TOK_STAR:          Ir_Op_Push(Jit, IR_OP_MUL); break;
+        case TOK_SLASH:         Ir_Op_Push(Jit, IR_OP_DIV); break;
+        case TOK_LESS:          Ir_Op_Push(Jit, IR_OP_LESS); break;
+        case TOK_LESS_EQUAL:    Ir_Op_Push(Jit, IR_OP_LESS_EQUAL); break;
+        case TOK_GREATER:       Ir_Op_Push(Jit, IR_OP_GREATER); break;
+        case TOK_GREATER_EQUAL: Ir_Op_Push(Jit, IR_OP_GREATER_EQUAL); break;
+        default:
+        {
+            UNREACHABLE();
+        } break;
         }
+        Left = -1;
     }
     return Left;
 }
@@ -845,15 +895,26 @@ static int Jit_Ir_CompileExpr(jit *Jit, precedence Prec, bool8 AllowForwardRefer
 
 
 
-jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName, int ArgCount)
+jit_function *Jit_FindFunction(jit *Jit, 
+    const char *FnNameStr, 
+    i32 FnNameStrLen, 
+    i32 FnNameLine, 
+    i32 FnNameOffset, 
+    int ArgCount)
 {
     def_table_entry *Entry = DefTable_Find(
-        &Jit->Global, FnName->Str.Ptr, FnName->Str.Len, TYPE_FUNCTION
+        &Jit->Global, FnNameStr, FnNameStrLen, TYPE_FUNCTION
     );
 
     if (!Entry)
     {
-        Error_AtToken(&Jit->Error, FnName, "Undefined function.");
+        Error_AtStr(&Jit->Error, 
+            FnNameStr, 
+            FnNameStrLen, 
+            FnNameLine, 
+            FnNameOffset, 
+            "Undefined function."
+        );
         return NULL;
     }
 
@@ -863,7 +924,12 @@ jit_function *Jit_FindFunction(jit *Jit, const jit_token *FnName, int ArgCount)
     {
         const char *Plural = Function->ParamCount > 1? 
             "arguments" : "argument";
-        Error_AtToken(&Jit->Error, FnName, "Expected %d %s, got %d instead.", 
+        Error_AtStr(&Jit->Error, 
+            FnNameStr, 
+            FnNameStrLen,
+            FnNameLine, 
+            FnNameOffset,
+            "Expected %d %s, got %d instead.", 
             Function->ParamCount, Plural, ArgCount
         );
         return NULL;
@@ -896,16 +962,17 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
 
     /* function params */
     Function->ParamCount = 0;
-    Function->ParamStart = Ir_Data_GetSize(&Jit->IrData);
     if (TOK_RPAREN != NextToken(Jit).Type)
     {
         do {
             ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
             jit_token Parameter = CurrToken(Jit); 
-            Ir_Data_PushParam(Jit, Parameter.Str, Function->ParamCount);
+            Ir_PushParamData(&Jit->IrData, Parameter.Str, Function->ParamCount, Jit->Storage.DataSize);
             Function->ParamCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
+    /* because IrData is a downward-growing stack, Param starting point is the latest param */
+    Function->ParamStart = Jit->IrData.ByteCount;
     ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after function declaration.");
 
@@ -1064,13 +1131,13 @@ static u32 Jit_Hash(const char *Str, int StrLen)
 }
 
 
-static void Jit_Reset(jit *Jit, const char *Location, jit_compilation_flags Flags)
+static void Jit_Reset(jit *Jit, const char *Src, jit_compilation_flags Flags)
 {
     Jit->PrevVarEnd = VAR_END_LAST;
     Jit->PrevFnEnd = FN_END_LAST;
     Jit->Flags = Flags;
-    Jit->Start = Location; 
-    Jit->End = Location;
+    Jit->Start = Src; 
+    Jit->End = Src;
     Jit->Line = 1;
     Jit->Offset = 1;
 
@@ -1080,6 +1147,8 @@ static void Jit_Reset(jit *Jit, const char *Location, jit_compilation_flags Flag
     Jit->IrOpByteCount = 0;
     Jit->IrOp = Jit_Scratchpad_LeftPtr(&Jit->S);
     /* ir data array starts from the right and grows leftward in the scratchpad */
+    Jit->IrData.SrcBegin = Src;
+    Jit->IrData.S = &Jit->S;
     Jit->IrData.ByteCount = 0;
     Jit->IrData.Ptr = Jit_Scratchpad_RightPtr(&Jit->S);
 
@@ -1131,36 +1200,33 @@ void Jit_Destroy(jit *Jit)
 
 static void PrintVars(jit *Jit)
 {
-    i32 Offset = 0;
+    i32 Offset = Jit->IrData.ByteCount;
     int i = 0;
-    while (Offset < Ir_Data_GetSize(&Jit->IrData))
+    while (Offset > 0)
     {
-        jit_ir_data_type Type = Ir_Data_GetType(&Jit->IrData, Offset);
-        const u8 *Data = Ir_Data_Get(&Jit->IrData, Offset);
-        switch (Type)
+        jit_ir_data Data = Ir_GetData(&Jit->IrData, Offset);
+        switch (Data.Type)
         {
         case IR_DATA_CONST:  
         {
-            double Const;
-            Ir_Data_GetPayload(Data, &Const);
-            printf("Const %d = %f\n", i, Const);
+            printf("Const %d = %f\n", i, Data.As.Const);
         } break;
         case IR_DATA_VARREF: 
         {
-            jit_token_skinny VarRef;
-            Ir_Data_GetPayload(Data, &VarRef);
-            printf("VarRef %d = '%.*s'\n", i, VarRef.StrLen, VarRef.Str);
+            printf("VarRef %d = '%.*s'\n", i, Data.As.VarRef.StrLen, Data.As.VarRef.Str);
         } break;
         case IR_DATA_PARAM:  
         {
-            jit_ir_data_param Param;
-            Ir_Data_GetPayload(Data, &Param);
-            printf("Param %d = '%.*s', %d\n", i, Param.StrLen, Param.Str, Param.Index);
+            printf("Param %d = '%.*s', offset=%d\n", 
+                i, 
+                Data.As.Param.StrLen, Data.As.Param.Str, 
+                Data.As.Param.Location.As.Mem.Offset
+            );
         } break;
         default: UNREACHABLE(); break;
         }
         i++;
-        Offset += 1 + Ir_Data_GetPayloadSize(Type);
+        Offset = Ir_GetNextDataOffset(&Jit->IrData, Offset);
     }
 }
 

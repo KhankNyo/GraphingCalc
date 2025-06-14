@@ -171,7 +171,7 @@ void Emitter_Reset(jit_emitter *Emitter, bool8 EmitFloat32Instructions)
 
 
 
-void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg)
+static void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg)
 {
     if (DstReg != SrcReg)
     {
@@ -180,7 +180,7 @@ void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg)
     }
 }
 
-void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 SrcOffset)
+static void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 SrcOffset)
 {
     /* movq [base + offset], src */
     EmitArray(Emitter, 
@@ -190,7 +190,7 @@ void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 SrcOf
     Emit_GenericModRm(Emitter, SrcReg, DstBase, SrcOffset);
 }
 
-void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
+static void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
 {
     /* emit it as a store instruction initially */
     uint PrevSize = EmitArray(Emitter, 
@@ -220,47 +220,47 @@ void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOff
 }
 
 
-void Emit_Add(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
+static void Emit_Add(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x58, Dst, Base, Offset);
 }
 
-void Emit_Sub(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
+static void Emit_Sub(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x5C, Dst, Base, Offset);
 }
 
-void Emit_Mul(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
+static void Emit_Mul(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x59, Dst, Base, Offset);
 }
 
-void Emit_Div(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
+static void Emit_Div(jit_emitter *Emitter, jit_reg Dst, jit_reg Base, i32 Offset)
 {
     Emit_FloatOpcode(Emitter, 0x5E, Dst, Base, Offset);
 }
 
-void Emit_AddReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
+static void Emit_AddReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x58, Dst, Src);
 }
 
-void Emit_SubReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
+static void Emit_SubReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x5C, Dst, Src);
 }
 
-void Emit_MulReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
+static void Emit_MulReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x59, Dst, Src);
 }
 
-void Emit_DivReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
+static void Emit_DivReg(jit_emitter *Emitter, jit_reg Dst, jit_reg Src)
 {
     Emit_FloatOpcodeReg(Emitter, 0x5E, Dst, Src);
 }
 
-void Emit_LoadZero(jit_emitter *Emitter, jit_reg DstReg)
+static void Emit_LoadZero(jit_emitter *Emitter, jit_reg DstReg)
 {
     /* xorps dst, dst */
     Emit(Emitter, 3, 0x0F, 0x57, MODRM(3, DstReg, DstReg));
@@ -291,7 +291,7 @@ uint Emit_FunctionEntry(jit_emitter *Emitter)
 }
 
 
-void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
+static void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
 {
     uint PrologueSize = 1 + 3 + 3 + 4;
     ASSERT(Location + PrologueSize <= Emitter->BufferSize, "invalid location");
@@ -311,7 +311,7 @@ void Emit_FunctionExit(jit_emitter *Emitter, uint Location, i32 StackSize)
 }
 
 
-uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
+static uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
 {
     /* call rel32 */
     i32 Rel32 = FunctionLocation - (Emitter->BufferSize + 5);
@@ -320,7 +320,7 @@ uint Emit_Call(jit_emitter *Emitter, uint FunctionLocation)
     return Location;
 }
 
-void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation)
+static void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint FunctionLocation)
 {
     ASSERT(FunctionLocation < Emitter->BufferSize, "bad dst location");
     ASSERT(CallLocation + 5 <  Emitter->BufferSize, "bad src location");
@@ -340,7 +340,7 @@ static jit_location Jit_AllocateStack(jit_storage_manager *Storage)
 }
 
 
-void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
+static void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
 {
     for (int i = 0; i < Stack->Count; i++)
     {
@@ -473,7 +473,7 @@ static u8 *Emitter_TranslateSingleUnit(
     jit_ir_op_type BeginOp, jit_ir_op_type EndOp
 #else
     jit_emitter *Emitter, 
-    jit_ir_data *Data, jit_storage_manager *Storage,
+    jit_ir_data_manager *Data, jit_storage_manager *Storage,
     jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
     jit *Jit,
     u8 *IP, const u8 *End,
@@ -515,7 +515,7 @@ static u8 *Emitter_TranslateSingleUnit(
             ASSERT(Fn, "nullptr");
 
             Fn->Location = Emit_FunctionEntry(Emitter);
-            ASSERT(Ir_Data_GetSize(Data) >= Fn->ParamStart + Fn->ParamCount, "unreachable");
+            ASSERT(Data->ByteCount >= Fn->ParamStart + Fn->ParamCount, "unreachable");
 
             /* set parameters to valid location */
             for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
@@ -561,7 +561,7 @@ static u8 *Emitter_TranslateSingleUnit(
         {
             i32 LoadIndex = IR_CONSUME_I32();
 
-            const u8 *IrData = Ir_Data_Get(Data, LoadIndex);
+            jit_ir_data IrData = Ir_GetData(Data, LoadIndex);
             int ParamStart = 0;
             int ParamCount = 0;
             if (Fn)
@@ -569,7 +569,7 @@ static u8 *Emitter_TranslateSingleUnit(
                 ParamStart = Fn->ParamStart;
                 ParamCount = Fn->ParamCount;
             }
-            jit_location Location = Ir_Data_GetLocation(Jit, IrData, ParamStart, ParamCount);
+            jit_location Location = Ir_Data_GetLocation(Jit, &IrData, ParamStart, ParamCount);
             Ir_Stack_Push(Stack, &Location);
         } break;
         case IR_OP_STORE: /* store expr on stack to dst */
@@ -592,10 +592,24 @@ static u8 *Emitter_TranslateSingleUnit(
         case IR_OP_CALL:
         {
             /* get args */
-            i32 ArgCount = IR_CONSUME_I32();
-            const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
+#if 1
+            const char *FnName = *IR_CONSUME_AND_INTERPRET(const char *);
+            i32 FnNameLen = IR_CONSUME_I32();
+            i32 FnNameLine = IR_CONSUME_I32();
+            i32 FnNameOffset = IR_CONSUME_I32();
+#else
 
-            const jit_function *Function = Jit_FindFunction(Jit, FnName, ArgCount);
+            //const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
+#endif
+            i32 ArgCount = IR_CONSUME_I32();
+
+            const jit_function *Function = Jit_FindFunction(Jit, 
+                FnName, 
+                FnNameLen, 
+                FnNameLine, 
+                FnNameOffset, 
+                ArgCount
+            );
             if (!Function)
                 break;
 
