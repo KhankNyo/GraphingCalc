@@ -478,16 +478,11 @@ static void Ir_Op_PushCall(jit *Jit, i32 ArgCount, const jit_token *FnName)
     u8 *ArgPtr = Ir_Op_PushAndReserveArgSize(Jit, IR_OP_CALL,
         Ir_Op_GetArgSize(IR_OP_CALL)
     );
-#if 0
-    MemCpy(ArgPtr, &ArgCount, sizeof(i32));
-    MemCpy(ArgPtr + sizeof(i32), FnName, sizeof(jit_token));
-#else
     MemCpy(ArgPtr, &FnName->Str.Ptr, sizeof(const char *));
     MemCpy(ArgPtr + 8, &FnName->Str.Len, 4);
     MemCpy(ArgPtr + 8 + 4, &FnName->Line, 4);
     MemCpy(ArgPtr + 8 + 2*4, &FnName->Offset, 4);
     MemCpy(ArgPtr + 8 + 3*4, &ArgCount, 4);
-#endif
 }
 static void Ir_Op_PushOpPtr(jit *Jit, jit_ir_op_type Op, const void *Ptr)
 {

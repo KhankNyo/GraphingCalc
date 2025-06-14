@@ -329,6 +329,9 @@ static void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint Func
 }
 
 
+/* ======================================================================
+ *                           Ir translation
+ * ====================================================================== */
 #include "Jit.h"
 
 static jit_location Jit_AllocateStack(jit_storage_manager *Storage)
@@ -348,7 +351,7 @@ static void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_sto
         switch (Elem->Storage)
         {
         case STORAGE_MEM: break; /* already in memory, nothing to do */
-        case STORAGE_REG:
+        case STORAGE_REG: /* in register, spill out to stack */
         {
             jit_reg Src = Elem->As.Reg;
             jit_location Location = Jit_AllocateStack(Storage);
@@ -442,8 +445,6 @@ void Jit_EmitCallArgs(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_man
         } break;
         }
     }
-    /* done emitting actual instructions, pop ir stack */
-    Ir_Stack_PopMultiple(Stack, ArgCount);
 
     /* deallocate argument registers */
     for (int i = 0; i < ArgCount && TargetEnv_IsArgumentInReg(i); i++)
@@ -466,19 +467,12 @@ void Jit_EmitCallArgs(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_man
 #define IR_CONSUME_I32() *IR_CONSUME_AND_INTERPRET(i32)
 
 static u8 *Emitter_TranslateSingleUnit(
-#if 0
-    jit *Jit, 
-    u8 *IP, 
-    jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
-    jit_ir_op_type BeginOp, jit_ir_op_type EndOp
-#else
     jit_emitter *Emitter, 
     jit_ir_data_manager *Data, jit_storage_manager *Storage,
     jit_ir_stack *Stack, jit_fnref_stack *FnRef, 
     jit *Jit,
     u8 *IP, const u8 *End,
     jit_ir_op_type BeginOp, jit_ir_op_type EndOp
-#endif
 )
 {
     while (IP < End && *IP != BeginOp)
@@ -515,7 +509,6 @@ static u8 *Emitter_TranslateSingleUnit(
             ASSERT(Fn, "nullptr");
 
             Fn->Location = Emit_FunctionEntry(Emitter);
-            ASSERT(Data->ByteCount >= Fn->ParamStart + Fn->ParamCount, "unreachable");
 
             /* set parameters to valid location */
             for (int i = 0; i < Fn->ParamCount && TargetEnv_IsArgumentInReg(i); i++)
@@ -592,23 +585,18 @@ static u8 *Emitter_TranslateSingleUnit(
         case IR_OP_CALL:
         {
             /* get args */
-#if 1
             const char *FnName = *IR_CONSUME_AND_INTERPRET(const char *);
             i32 FnNameLen = IR_CONSUME_I32();
             i32 FnNameLine = IR_CONSUME_I32();
             i32 FnNameOffset = IR_CONSUME_I32();
-#else
-
-            //const jit_token *FnName = IR_CONSUME_AND_INTERPRET(jit_token);
-#endif
-            i32 ArgCount = IR_CONSUME_I32();
+            i32 FnArgCount = IR_CONSUME_I32();
 
             const jit_function *Function = Jit_FindFunction(Jit, 
                 FnName, 
                 FnNameLen, 
                 FnNameLine, 
                 FnNameOffset, 
-                ArgCount
+                FnArgCount
             );
             if (!Function)
                 break;
@@ -628,7 +616,8 @@ static u8 *Emitter_TranslateSingleUnit(
                 .As.Reg = TargetEnv_GetReturnReg(),
             };
 
-            /* push return value on the stack */
+            /* pop arguments and push return value on the stack */
+            Ir_Stack_PopMultiple(Stack, FnArgCount);
             Ir_Stack_Push(Stack, &Result);
         } break;
         case IR_OP_ADD:

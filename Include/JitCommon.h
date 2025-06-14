@@ -198,24 +198,44 @@ jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef);
 #define FN_LOCATION_UNDEFINED -1
 #define VAR_END_LAST 0
 #define FN_END_LAST 0
+/* these instruction operates on a stack: 
+ *  stack[n] denotes the elem on the n-th position in said stack
+ *  push(elem): pushes an element onto the evaluation stack (ir stack) 
+ *  pop(count=1): pops the <count> element(s) from the evaluation stack (ir stack), default is pop(1) 
+ *  fetch(c_type): relative to Instruction Pointer (IP), 
+ *                  treat the next sizeof(c_type) bytes as c_type, i.e. (c_type *)IP, 
+ *                  then IP += sizeof(c_type) */
 typedef enum jit_ir_op_type 
 {
     /* for instruction argument size, see Ir_Op_GetArgSize() */
-    IR_OP_LESS,             
-    IR_OP_LESS_EQUAL, 
-    IR_OP_GREATER, 
-    IR_OP_GREATER_EQUAL, 
-    IR_OP_ADD,              
-    IR_OP_SUB,              
-    IR_OP_MUL,              
-    IR_OP_DIV,              
-    IR_OP_NEG,              
-    IR_OP_LOAD,             
-    IR_OP_CALL_ARG_START,   
-    IR_OP_CALL,             
-    IR_OP_SWAP,             
-    IR_OP_STORE,            
-    IR_OP_FN_BEGIN,         
+    IR_OP_LESS,             /* stack[1] = if (stack[1] < stack[0])  -> 1.0f else -> 0.0f;   pop(); */
+    IR_OP_LESS_EQUAL,       /* stack[1] = if (stack[1] <= stack[0]) -> 1.0f else -> 0.0f;   pop(); */
+    IR_OP_GREATER,          /* stack[1] = if (stack[1] > stack[0])  -> 1.0f else -> 0.0f;   pop(); */
+    IR_OP_GREATER_EQUAL,    /* stack[1] = if (stack[1] >= stack[0]) -> 1.0f else -> 0.0f;   pop(); */
+    IR_OP_ADD,              /* stack[1] = stack[1] + stack[0];                              pop(); */
+    IR_OP_SUB,              /* stack[1] = stack[1] - stack[0];                              pop(); */
+    IR_OP_MUL,              /* stack[1] = stack[1] * stack[0];                              pop(); */
+    IR_OP_DIV,              /* stack[1] = stack[1] / stack[0];                              pop(); */
+    IR_OP_NEG,              /* stack[0] = 0 - stack[0];                                     pop(); */
+    IR_OP_LOAD,             /* push(Ir_GetData(fetch(i32))) */
+    IR_OP_CALL_ARG_START,   /* implementation might use this to spill call argument registers */
+    IR_OP_CALL,             /* FnNameStr = fetch(const char *)
+                             * FnNameLen = fetch(i32)
+                             * FnNameLine = fetch(i32)
+                             * FnNameLineOffset = fetch(i32)
+                             * FnArgCount = fetch(i32)
+                             * 
+                             * find function, if function is available, emit instructions to call it, then 
+                             * pop(FnArgCount);
+                             * push(CallResult);
+                             */
+    IR_OP_SWAP,             /* swap(stack[1], stack[0]) */
+    IR_OP_STORE,            /* GlobalOffset = fetch(i32); 
+                             * Value = pop();
+                             * emit instruction to store Value to GlobalOffset
+                             */
+    /* TODO: this is for debug info, might be best if the target platform handle this instead. */
+    IR_OP_FN_BEGIN,
     IR_OP_FN_END,           
     IR_OP_VAR_BEGIN,        
     IR_OP_VAR_END,          
