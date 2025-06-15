@@ -17,7 +17,6 @@ static inline int TargetEnv_GetStackFrameReg(void);
 
 static inline bool8 TargetEnv_IsArgumentInReg(int ArgIndex);
 static inline bool8 TargetEnv_CallerShouldSave(int Reg);
-static inline int TargetEnv_GetReturnReg(void);
 static inline int TargetEnv_GetArgStackSize(int ArgCount, int DataSize);
 static inline jit_location TargetEnv_GetArg(int Index, int DataSize);
 static inline jit_mem TargetEnv_GetParam(int Index, int DataSize);
@@ -40,7 +39,6 @@ void Emitter_TranslateIr(jit *Jit);
 /* TARGETENV_<platform name> must be defined via compilation flags */
 /* x64 Windows */
 #if defined(TARGETENV_X64_WINDOWS)
-static inline bool8 TargetEnv_x64_IsAVXSupported(void);
 #   include "x64_Windows_TargetEnv.h"
 #   include "x64_Windows_Emitter.h"
 /* other platforms */

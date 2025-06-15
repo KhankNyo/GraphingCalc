@@ -549,7 +549,7 @@ static int Ir_PushRefData(jit_ir_data_manager *D, const jit_token *VarName)
     return Index;
 }
 
-static int Ir_PushParamData(jit_ir_data_manager *D, strview VarName, i32 ParamIndex, u8 DataSize)
+static int Ir_PushParamData(jit_ir_data_manager *D, strview VarName, i32 ParamIndex)
 {
     u8 *Ptr = Ir_Data_PushReserveSize(D, IR_DATA_PARAM);
     int Index = D->ByteCount;
@@ -558,7 +558,6 @@ static int Ir_PushParamData(jit_ir_data_manager *D, strview VarName, i32 ParamIn
     MemCpy(Ptr + 0, &StrBegin, 4);
     MemCpy(Ptr + 4, &StrLen, 4);
     MemCpy(Ptr + 8, &ParamIndex, 4);
-    MemCpy(Ptr + 12, &DataSize, 1);
     return Index;
 }
 
@@ -588,17 +587,12 @@ jit_ir_data Ir_GetData(jit_ir_data_manager *D, i32 Offset)
     case IR_DATA_PARAM:
     {
         i32 StrBegin, StrLen, ParamIndex;
-        u8 DataSize;
         MemCpy(&StrBegin,   DataTypePtr + 1, 4);
         MemCpy(&StrLen,     DataTypePtr + 1 + 4, 4);
         MemCpy(&ParamIndex, DataTypePtr + 1 + 8, 4);
-        MemCpy(&DataSize,   DataTypePtr + 1 + 12, 1);
         Data.As.Param.Str = D->SrcBegin + StrBegin;
         Data.As.Param.StrLen = StrLen;
-        Data.As.Param.Location = (jit_location) {
-            .Storage = STORAGE_MEM,
-            .As.Mem = TargetEnv_GetParam(ParamIndex, DataSize),
-        };
+        Data.As.Param.Index = ParamIndex;
     } break;
     case IR_DATA_VARREF:
     {
@@ -644,7 +638,7 @@ static bool8 Jit_FindVariable(
         {
             if (NULL != OutVarLocation)
             {
-                *OutVarLocation = Data.As.Param.Location; 
+                *OutVarLocation = LocationFromMem(TargetEnv_GetParam(Data.As.Param.Index, Jit->Storage.DataSize)); 
             }
             return true;
         }
@@ -672,7 +666,7 @@ jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalSco
     {
     case IR_DATA_CONST:
     {
-        Result.Storage = STORAGE_MEM;
+        Result.Type = LOCATION_MEM;
         Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
     } break;
     case IR_DATA_VARREF:
@@ -688,7 +682,7 @@ jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalSco
     } break;
     case IR_DATA_PARAM:
     {
-        Result = Data->As.Param.Location;
+        Result = LocationFromMem(TargetEnv_GetParam(Data->As.Param.Index, Jit->Storage.DataSize));
     } break;
     default:
     {
@@ -962,7 +956,7 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
         do {
             ConsumeOrError(Jit, TOK_IDENTIFIER, "Expected parameter name.");
             jit_token Parameter = CurrToken(Jit); 
-            Ir_PushParamData(&Jit->IrData, Parameter.Str, Function->ParamCount, Jit->Storage.DataSize);
+            Ir_PushParamData(&Jit->IrData, Parameter.Str, Function->ParamCount);
             Function->ParamCount++;
         } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
     }
@@ -1014,7 +1008,7 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
     }
     /* store the result of the expression */
     jit_location Global = {
-        .Storage = STORAGE_MEM,
+        .Type = LOCATION_MEM,
         .As.Mem = Storage_AllocateGlobal(&Jit->Storage),
     };
     Ir_Op_PushOp4(Jit, IR_OP_STORE, Global.As.Mem.Offset);
@@ -1215,7 +1209,7 @@ static void PrintVars(jit *Jit)
             printf("Param %d = '%.*s', offset=%d\n", 
                 i, 
                 Data.As.Param.StrLen, Data.As.Param.Str, 
-                Data.As.Param.Location.As.Mem.Offset
+                TargetEnv_GetParam(Data.As.Param.Index, Jit->Storage.DataSize).Offset
             );
         } break;
         default: UNREACHABLE(); break;

@@ -12,6 +12,7 @@
     (((scale) & 0x3) << 6)\
     | ((index) & 0x7) << 3\
     | ((base) & 0x7) 
+#define XMM(n) (n)
 
 
 
@@ -180,14 +181,14 @@ static void Emit_Move(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcReg)
     }
 }
 
-static void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_reg DstBase, i32 SrcOffset)
+static void Emit_Store(jit_emitter *Emitter, jit_reg SrcReg, jit_mem Mem)
 {
     /* movq [base + offset], src */
     EmitArray(Emitter, 
         Emitter->StoreSingle,
         sizeof Emitter->StoreSingle
     );
-    Emit_GenericModRm(Emitter, SrcReg, DstBase, SrcOffset);
+    Emit_GenericModRm(Emitter, SrcReg, Mem.BaseReg, Mem.Offset);
 }
 
 static void Emit_Load(jit_emitter *Emitter, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
@@ -334,31 +335,22 @@ static void Emitter_PatchCall(jit_emitter *Emitter, uint CallLocation, uint Func
  * ====================================================================== */
 #include "Jit.h"
 
-static jit_location Jit_AllocateStack(jit_storage_manager *Storage)
-{
-    return (jit_location) {
-        .Storage = STORAGE_MEM,
-        .As.Mem = Storage_AllocateStack(Storage),
-    };
-}
-
-
-static void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
+static void Emitter_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
 {
     for (int i = 0; i < Stack->Count; i++)
     {
         jit_location *Elem = Ir_Stack_Top(Stack, i);
-        switch (Elem->Storage)
+        switch (Elem->Type)
         {
-        case STORAGE_MEM: break; /* already in memory, nothing to do */
-        case STORAGE_REG: /* in register, spill out to stack */
+        case LOCATION_MEM: break; /* already in memory, nothing to do */
+        case LOCATION_REG: /* in register, spill out to stack */
         {
             jit_reg Src = Elem->As.Reg;
-            jit_location Location = Jit_AllocateStack(Storage);
-            Emit_Store(Emitter, Src, Location.As.Mem.BaseReg, Location.As.Mem.Offset);
+            jit_mem SaveLocation = Storage_AllocateStack(Storage);
+            Emit_Store(Emitter, Src, SaveLocation);
             Storage_DeallocateReg(Storage, Src);
 
-            *Elem = Location;
+            *Elem = LocationFromMem(SaveLocation);
         } break;
         }
     }
@@ -366,35 +358,32 @@ static void Ir_Stack_SpillReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_sto
 
 
 
-jit_location Jit_AllocateReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
+jit_reg Emitter_AllocateReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage)
 {
-    jit_location Location = {
-        .Storage = STORAGE_REG,
-        .As.Reg = Storage_TryAllocateReg(Storage),
-    };
-    if (JIT_REG_INVALID == Location.As.Reg)
+    jit_reg Reg = Storage_TryAllocateReg(Storage);
+    if (JIT_REG_INVALID == Reg)
     {
         /* spill stack */
-        Ir_Stack_SpillReg(Emitter, Stack, Storage);
-        Location.As.Reg = Storage_TryAllocateReg(Storage);
-        ASSERT(Location.As.Reg != JIT_REG_INVALID, "unreachable");
+        Emitter_SpillReg(Emitter, Stack, Storage);
+        Reg = Storage_TryAllocateReg(Storage);
+        ASSERT(Reg != JIT_REG_INVALID, "unreachable");
     }
-    return Location;
+    return Reg;
 }
 
 
 jit_reg Jit_ToReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager *Storage, const jit_location *Location)
 {
     jit_reg Result = -1;
-    switch (Location->Storage)
+    switch (Location->Type)
     {
-    case STORAGE_REG:
+    case LOCATION_REG:
     {
         Result = Location->As.Reg;
     } break;
-    case STORAGE_MEM:
+    case LOCATION_MEM:
     {
-        Result = Jit_AllocateReg(Emitter, Stack, Storage).As.Reg;
+        Result = Emitter_AllocateReg(Emitter, Stack, Storage);
         Emit_Load(Emitter, Result, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
     } break;
     }
@@ -403,13 +392,13 @@ jit_reg Jit_ToReg(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_manager
 
 jit_reg Jit_CopyToReg(jit_emitter *Emitter, jit_reg Reg, const jit_location *Location)
 {
-    switch (Location->Storage)
+    switch (Location->Type)
     {
-    case STORAGE_MEM:
+    case LOCATION_MEM:
     {
         Emit_Load(Emitter, Reg, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
     } break;
-    case STORAGE_REG:
+    case LOCATION_REG:
     {
         Emit_Move(Emitter, Reg, Location->As.Reg);
     } break;
@@ -430,17 +419,17 @@ void Jit_EmitCallArgs(jit_emitter *Emitter, jit_ir_stack *Stack, jit_storage_man
     {
         jit_location *Location = Ir_Stack_Top(Stack, ArgCount - i - 1);
         jit_location Arg = TargetEnv_GetArg(i, Storage->DataSize);
-        switch (Arg.Storage)
+        switch (Arg.Type)
         {
-        case STORAGE_REG:
+        case LOCATION_REG:
         {
             Jit_CopyToReg(Emitter, Arg.As.Reg, Location);
             Storage_ForceAllocateReg(Storage, Arg.As.Reg);
         } break;
-        case STORAGE_MEM:
+        case LOCATION_MEM:
         {
             jit_reg Tmp = Jit_ToReg(Emitter, Stack, Storage, Location);
-            Emit_Store(Emitter, Tmp, Arg.As.Mem.BaseReg, Arg.As.Mem.Offset);
+            Emit_Store(Emitter, Tmp, Arg.As.Mem);
             Storage_DeallocateReg(Storage, Tmp);
         } break;
         }
@@ -517,8 +506,7 @@ static u8 *Emitter_TranslateSingleUnit(
                 jit_reg VolatileParam = TargetEnv_GetArg(i, Storage->DataSize).As.Reg;
                 Emit_Store(Emitter, 
                     VolatileParam,
-                    NonVolatileParam.BaseReg,
-                    NonVolatileParam.Offset
+                    NonVolatileParam
                 );
             }
         } break;
@@ -529,9 +517,9 @@ static u8 *Emitter_TranslateSingleUnit(
 
             /* pop the top of the stack and emit return ins */
             jit_location *ReturnValue = Ir_Stack_Pop(Stack);
-            Jit_CopyToReg(Emitter, TargetEnv_GetReturnReg(), ReturnValue);
+            Jit_CopyToReg(Emitter, XMM(0), ReturnValue);
             /* deallocate return register */
-            if (STORAGE_REG == ReturnValue->Storage)
+            if (LOCATION_REG == ReturnValue->Type)
             {
                 Storage_DeallocateReg(Storage, ReturnValue->As.Reg);
             }
@@ -574,13 +562,13 @@ static u8 *Emitter_TranslateSingleUnit(
                 .BaseReg = TargetEnv_GetGlobalPtrReg(),
                 .Offset = Offset,
             };
-            Emit_Store(Emitter, Src, Dst.BaseReg, Dst.Offset);
+            Emit_Store(Emitter, Src, Dst);
             Storage_DeallocateReg(Storage, Src);
         } break;
         case IR_OP_CALL_ARG_START:
         {
             /* make all previous location on the stack a memory location */
-            Ir_Stack_SpillReg(Emitter, Stack, Storage);
+            Emitter_SpillReg(Emitter, Stack, Storage);
         } break;
         case IR_OP_CALL:
         {
@@ -610,11 +598,8 @@ static u8 *Emitter_TranslateSingleUnit(
             }
 
             /* return */
-            Storage_ForceAllocateReg(Storage, TargetEnv_GetReturnReg());
-            jit_location Result = {
-                .Storage = STORAGE_REG, 
-                .As.Reg = TargetEnv_GetReturnReg(),
-            };
+            Storage_ForceAllocateReg(Storage, XMM(0));
+            jit_location Result = LocationFromReg(XMM(0));
 
             /* pop arguments and push return value on the stack */
             Ir_Stack_PopMultiple(Stack, FnArgCount);
@@ -634,22 +619,19 @@ static u8 *Emitter_TranslateSingleUnit(
 
             /* if commutative and right was in reg first, swap operands */
             if ((IR_OP_ADD == Op || IR_OP_MUL == Op)
-            && STORAGE_REG == Right->Storage)
+            && LOCATION_REG == Right->Type)
             {
                 SWAP(jit_location *, Left, Right);
             }
 
-            jit_location Result = {
-                .Storage = STORAGE_REG,
-                .As.Reg = Jit_ToReg(Emitter, Stack, Storage, Left),
-            };
-            if (Right->Storage == STORAGE_REG)
+            jit_location Result = LocationFromReg(Jit_ToReg(Emitter, Stack, Storage, Left));
+            if (Right->Type == LOCATION_REG)
             {
                 Storage_DeallocateReg(Storage, Right->As.Reg);
             }
 
 #define OP(op_name, left_reg, right_expr) do {\
-    if (STORAGE_MEM == (right_expr)->Storage)\
+    if (LOCATION_MEM == (right_expr)->Type)\
         Emit_ ## op_name (Emitter, left_reg, (right_expr)->As.Mem.BaseReg, (right_expr)->As.Mem.Offset);\
     else Emit_ ## op_name ## Reg(Emitter, left_reg, (right_expr)->As.Reg);\
 } while (0)
@@ -671,12 +653,15 @@ static u8 *Emitter_TranslateSingleUnit(
         {
             /* stack.top = 0 - stack.top */
             jit_location *Value = Ir_Stack_Pop(Stack);
-            jit_location Result = Jit_AllocateReg(Emitter, Stack, Storage);
-            Emit_LoadZero(Emitter, Result.As.Reg);
-            OP(Sub, Result.As.Reg, Value);
-            Ir_Stack_Push(Stack, &Result);
+            jit_reg ResultReg = Emitter_AllocateReg(Emitter, Stack, Storage);
+            Emit_LoadZero(Emitter, ResultReg);
+            OP(Sub, ResultReg, Value);
+            {
+                jit_location Result = LocationFromReg(ResultReg);
+                Ir_Stack_Push(Stack, &Result);
+            }
 
-            if (Value->Storage == STORAGE_REG)
+            if (Value->Type == LOCATION_REG)
             {
                 Storage_DeallocateReg(Storage, Value->As.Reg);
             }

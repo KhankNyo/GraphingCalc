@@ -114,7 +114,7 @@ static inline jit_location TargetEnv_GetArg(int Index, int DataSize)
     if (TargetEnv_IsArgumentInReg(Index))
     {
         jit_location Reg = {
-            .Storage = STORAGE_REG,
+            .Type = LOCATION_REG,
             .As.Reg = Index + 1,
         };
         return Reg;
@@ -122,7 +122,7 @@ static inline jit_location TargetEnv_GetArg(int Index, int DataSize)
     else
     {
         jit_location Mem = {
-            .Storage = STORAGE_MEM,
+            .Type = LOCATION_MEM,
             .As.Mem = {
                 .BaseReg = RSP,
                 .Offset = (Index + 1) * 8, /* always align to 8-byte boundary */
@@ -138,10 +138,6 @@ static inline jit_mem TargetEnv_GetParam(int Index, int DataSize)
         .BaseReg = RBP,
         .Offset = 0x10 + (Index + 1) * 8, /* always align to 8-byte boundary */
     };
-}
-static inline int TargetEnv_GetReturnReg(void)
-{
-    return 0; /* xmm0 */
 }
 
 #endif /* TARGETENV_X64_WINDOWS_H */

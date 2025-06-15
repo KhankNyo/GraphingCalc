@@ -3,48 +3,21 @@
 
 #include "Common.h"
 
-#define JIT_REG_INVALID -1
-typedef i8 jit_reg;
 
 typedef struct jit jit;
 typedef struct jit_storage_manager jit_storage_manager;
 typedef struct jit_emitter jit_emitter;
 
-typedef enum jit_token_type 
+
+/*=======================================
+ *              jit_location 
+ *======================================= */
+typedef enum jit_location_type 
 {
-    TOK_ERR = 0,
-    TOK_NUMBER,
-    TOK_PLUS,
-    TOK_MINUS,
-    TOK_SLASH,
-    TOK_STAR,
-
-    TOK_CARET,
-    TOK_PERCENT,
-    TOK_LPAREN,
-    TOK_RPAREN,
-    TOK_LBRACKET,
-
-    TOK_RBRACKET,
-    TOK_EQUAL,
-    TOK_IDENTIFIER,
-    TOK_NEWLINE,
-    TOK_COMMA, 
-
-    TOK_LESS, 
-    TOK_GREATER, 
-    TOK_LESS_EQUAL, 
-    TOK_GREATER_EQUAL,
-
-    TOK_EOF,
-} jit_token_type;
-
-typedef enum jit_storage_type 
-{
-    STORAGE_MEM = 1,
-    STORAGE_REG,
-} jit_storage_type;
-
+    LOCATION_MEM = 1,
+    LOCATION_REG,
+} jit_location_type;
+typedef i8 jit_reg;
 typedef struct jit_mem 
 {
     i32 Offset;
@@ -52,12 +25,39 @@ typedef struct jit_mem
 } jit_mem;
 typedef struct jit_location
 {
-    jit_storage_type Storage;
+    jit_location_type Type;
     union {
         jit_mem Mem;
         jit_reg Reg;
     } As;
 } jit_location;
+#define JIT_REG_INVALID -1
+static inline jit_location LocationFromReg(jit_reg R)
+{
+    return (jit_location) {
+        .Type = LOCATION_REG,
+        .As.Reg = R,
+    };
+}
+static inline jit_location LocationFromMemVerbose(jit_reg Base, i32 Offset)
+{
+    return (jit_location) {
+        .Type = LOCATION_MEM,
+        .As.Mem = {
+            .BaseReg = Base,
+            .Offset = Offset,
+        },
+    };
+}
+static inline jit_location LocationFromMem(jit_mem Mem)
+{
+    return (jit_location) {
+        .Type = LOCATION_MEM,
+        .As.Mem = Mem,
+    };
+}
+
+
 
 typedef struct jit_variable
 {
@@ -73,19 +73,6 @@ typedef struct jit_function
     int ParamStart;
     int ParamCount;
 } jit_function;
-
-typedef struct jit_token 
-{
-    strview Str;
-    int Offset, Line;
-    enum jit_token_type Type;
-
-    union {
-        double Number;
-        const char *ErrMsg;
-    } As;
-} jit_token;
-
 
 
 /* internal jit functions */
@@ -113,7 +100,6 @@ typedef struct jit_scratchpad
  *  i32 StrLen 
  *  i32 Line 
  *  i32 LineOffset
- *  u8 DataSize
  * IR_DATA_PARAM:
  *  u8 Tag
  *  i32 StrBegin
@@ -123,7 +109,7 @@ typedef struct jit_scratchpad
 typedef enum jit_ir_data_type 
 {
     IR_DATA_CONST = sizeof(double),
-    IR_DATA_PARAM = 3*sizeof(i32) + 1*sizeof(u8),
+    IR_DATA_PARAM = 3*sizeof(i32),
     IR_DATA_VARREF = 4*sizeof(i32),
 } jit_ir_data_type;
 typedef struct jit_ir_data 
@@ -133,7 +119,7 @@ typedef struct jit_ir_data
         struct {
             const char *Str;
             i32 StrLen;
-            jit_location Location;
+            int Index;
         } Param;
         struct {
             const char *Str;
@@ -247,6 +233,54 @@ jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, 
 jit_function *Jit_FindFunction(jit *Jit, const char *FnNameStr, i32 StrLen, i32 Line, i32 Offset, int ArgCount);
 jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen);
 
+
+
+
+
+/*=======================================
+ *              jit_token
+ *======================================= */
+typedef enum jit_token_type 
+{
+    TOK_ERR = 0,
+    TOK_NUMBER,
+    TOK_PLUS,
+    TOK_MINUS,
+    TOK_SLASH,
+    TOK_STAR,
+
+    TOK_CARET,
+    TOK_PERCENT,
+    TOK_LPAREN,
+    TOK_RPAREN,
+    TOK_LBRACKET,
+
+    TOK_RBRACKET,
+    TOK_EQUAL,
+    TOK_IDENTIFIER,
+    TOK_NEWLINE,
+    TOK_COMMA, 
+
+    TOK_LESS, 
+    TOK_GREATER, 
+    TOK_LESS_EQUAL, 
+    TOK_GREATER_EQUAL,
+
+    TOK_EOF,
+} jit_token_type;
+
+
+typedef struct jit_token 
+{
+    strview Str;
+    int Offset, Line;
+    enum jit_token_type Type;
+
+    union {
+        double Number;
+        const char *ErrMsg;
+    } As;
+} jit_token;
 
 #endif /* JIT_COMMON_H */
 
