@@ -2,7 +2,7 @@
 #define JIT_BACKEND_H
 
 #include "JitCommon.h"
-#include "Deftable.h"
+#include "DefTable.h"
 
 /* static assertion */
 void TCC_STATIC_ASSERT_FN__(void)
