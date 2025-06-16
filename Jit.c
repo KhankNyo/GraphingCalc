@@ -12,6 +12,7 @@ typedef enum precedence
 {
     PREC_NONE = 0,
     PREC_EXPR, 
+    PREC_COMPARE,
     PREC_PLUSMINUS,
     PREC_MULDIV,
     PREC_POW,
@@ -788,6 +789,11 @@ static precedence PrecedenceOf(jit_token_type Operator)
 {
     switch (Operator)
     {
+    case TOK_LESS:
+    case TOK_LESS_EQUAL:
+    case TOK_GREATER:
+    case TOK_GREATER_EQUAL:
+        return PREC_COMPARE;
     case TOK_PLUS:
     case TOK_MINUS:
         return PREC_PLUSMINUS;

@@ -460,6 +460,8 @@ graph_state Graph_OnEntry(void)
 
     const char *Expr = 
 #if 1
+        "f(x) = (x > 0)*(x<1)\n"
+#elif 0
         "f(x) = g(g(x))*h(x*1) + k(1, 2, 3, x, 4, 5, 6) + j(1, 0)\n"
         "h(x) = x*x\n"
         "k(a, b, c, d, e, f, g) = 1\n"

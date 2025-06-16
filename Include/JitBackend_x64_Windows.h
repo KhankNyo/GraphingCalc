@@ -27,6 +27,7 @@ typedef struct jit_backend_x64_windows
     int StackSize;
     int MaxStackSize;
     /* global management */
+    jit_mem One;
 
     u8 StoreSingle[3];
     u8 LoadSingle[3];

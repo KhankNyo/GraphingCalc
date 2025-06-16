@@ -15,6 +15,17 @@
     | ((base) & 0x7) 
 #define XMM(n) (n)
 
+typedef enum sse_cmp_type 
+{
+    CMP_EQ, 
+    CMP_LT, 
+    CMP_LE, 
+    CMP_UNORD, 
+    CMP_NEQ, 
+    CMP_NLT, 
+    CMP_NLE, 
+    CMP_ORD,
+} sse_cmp_type;
 
 
 typedef struct disasm_data
@@ -55,7 +66,20 @@ static const char *sXmmReg[] = {
     "xmm6",
     "xmm7",
 };
+static const char *sCmpType[] = {
+    [CMP_EQ] = "eq", 
+    [CMP_LT] = "lt", 
+    [CMP_LE] = "le", 
+    [CMP_UNORD] = "unord", 
+    [CMP_NEQ] = "ne", 
+    [CMP_NLT] = "ge", 
+    [CMP_NLE] = "gt", 
+    [CMP_ORD] = "ord",
+};
 
+
+static jit_reg Backend_AllocateReg(jit_backend *Backend, jit_ir_stack *Stack);
+static void Backend_DeallocateReg(jit_backend *Backend, jit_reg Reg);
 
 
 static int EmitCode(jit_backend *Backend, int Count, ...)
@@ -182,6 +206,8 @@ void Backend_Reset(jit_backend *Backend, int DataSize)
         MemCpy(Backend->LoadSingle, LoadSingle64, sizeof LoadSingle64);
     }
     else UNREACHABLE();
+
+    Backend->One = Backend_AllocateGlobal(Backend, 1.0);
 }
 
 
@@ -279,6 +305,32 @@ static void Backend_EmitLoadZero(jit_backend *Backend, jit_reg DstReg)
 {
     /* xorps dst, dst */
     EmitCode(Backend, 3, 0x0F, 0x57, MODRM(3, DstReg, DstReg));
+}
+
+static sse_cmp_type Backend_GetCmpType(jit_ir_op_type Type)
+{
+    switch (Type)
+    {
+    case IR_OP_LESS: return CMP_LT;
+    case IR_OP_GREATER: return CMP_NLE;
+    case IR_OP_LESS_EQUAL: return CMP_LE;
+    case IR_OP_GREATER_EQUAL: return CMP_NLT;
+    default: UNREACHABLE();
+    }
+    return 0;
+}
+
+static void Backend_EmitCmpReg(jit_backend *Backend, jit_reg Dst, jit_reg B, sse_cmp_type CmpType)
+{
+    /* cmpss dst, b */
+    Backend_EmitFloatOpcodeReg(Backend, 0xC2, Dst, B);
+    EmitCode(Backend, 1, CmpType);
+
+    /* movd tmp, 1.0f */
+    Backend_EmitLoad(Backend, B, Backend->One.BaseReg, Backend->One.Offset);
+
+    /* andps dst, tmp */
+    EmitCode(Backend, 3, 0x0F, 0x54, MODRM(3, Dst, B));
 }
 
 
@@ -721,10 +773,6 @@ const u8 *Backend_TranslateBlock(
         case IR_OP_SUB:
         case IR_OP_MUL:
         case IR_OP_DIV:
-        case IR_OP_LESS:            
-        case IR_OP_GREATER:         
-        case IR_OP_GREATER_EQUAL:   
-        case IR_OP_LESS_EQUAL:      
         {
             jit_location *Right = Ir_Stack_Pop(Stack);
             jit_location *Left = Ir_Stack_Pop(Stack);
@@ -761,6 +809,22 @@ const u8 *Backend_TranslateBlock(
             } break;
             }
 
+            Ir_Stack_Push(Stack, &Result);
+        } break;
+        case IR_OP_LESS:
+        case IR_OP_GREATER:
+        case IR_OP_LESS_EQUAL:
+        case IR_OP_GREATER_EQUAL:
+        {
+            jit_location *RightLocation = Ir_Stack_Pop(Stack);
+            jit_location *LeftLocation = Ir_Stack_Pop(Stack);
+            jit_reg Left = Backend_EmitMoveToReg(Backend, Stack, LeftLocation);
+            jit_reg Right = Backend_EmitMoveToReg(Backend, Stack, RightLocation);
+            jit_location Result = LocationFromReg(Left);
+
+            Backend_EmitCmpReg(Backend, Left, Right, Backend_GetCmpType(Op));
+
+            Backend_DeallocateReg(Backend, Right);
             Ir_Stack_Push(Stack, &Result);
         } break;
         case IR_OP_NEG:
@@ -1032,6 +1096,11 @@ static i32 DisasmSingleInstruction(u64 Addr, const u8 *Memory, i32 MemorySize, c
             WriteInstruction(&Disasm, "movaps ");
             X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
         } break;
+        case 0x54:
+        {
+            WriteInstruction(&Disasm, "andps ");
+            X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+        } break;
         default:
         {
             Unknown = true;
@@ -1050,6 +1119,14 @@ static i32 DisasmSingleInstruction(u64 Addr, const u8 *Memory, i32 MemorySize, c
             case 0x59: WriteInstruction(&Disasm, "mulsd "); break;
             case 0x5E: WriteInstruction(&Disasm, "divsd "); break;
             case 0x51: WriteInstruction(&Disasm, "sqrtsd "); break;
+            case 0xC2: 
+            {
+                WriteInstruction(&Disasm, "cmpsd ");
+                X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+                sse_cmp_type CmpType = ConsumeByte(&Disasm);
+                WriteInstruction(&Disasm, ", ");
+                WriteInstruction(&Disasm, sCmpType[CmpType]);
+            } goto Out;
             default:  
             {
                 Unknown = true;
@@ -1074,6 +1151,14 @@ static i32 DisasmSingleInstruction(u64 Addr, const u8 *Memory, i32 MemorySize, c
             case 0x5E: WriteInstruction(&Disasm, "divss "); break;
             case 0x51: WriteInstruction(&Disasm, "sqrtss "); break;
             case 0x7E: WriteInstruction(&Disasm, "movq "); break;
+            case 0xC2: 
+            {
+                WriteInstruction(&Disasm, "cmpss ");
+                X64DisasmModRM(&Disasm, MODRM_DST_SRC, sXmmReg);
+                sse_cmp_type CmpType = ConsumeByte(&Disasm);
+                WriteInstruction(&Disasm, ", ");
+                WriteInstruction(&Disasm, sCmpType[CmpType]);
+            } goto Out;
             default: 
             {
                 Unknown = true;
@@ -1129,6 +1214,7 @@ void Backend_Disassemble(const jit_backend *Backend, const def_table *Global)
 {
     const def_table_entry *Entry = Global->Head;
     const u8 *Program = Backend->Program;
+    int BytesPerLine = 10;
     while (Entry)
     {
         switch (Entry->Type)
@@ -1139,8 +1225,8 @@ void Backend_Disassemble(const jit_backend *Backend, const def_table *Global)
 
             char Instruction[64];
             i32 Addr = Function->Location;
-            printf("\n%016x: <%.*s>\n", Addr, Entry->As.Function.Name.Len, Entry->As.Function.Name.Ptr);
             i32 i = 0;
+            printf("\n%016x: <%.*s>\n", Addr, Entry->As.Function.Name.Len, Entry->As.Function.Name.Ptr);
             while (i < Function->InsByteCount)
             {
                 int InstructionSize = DisasmSingleInstruction(
@@ -1149,7 +1235,18 @@ void Backend_Disassemble(const jit_backend *Backend, const def_table *Global)
                     Function->InsByteCount - i, 
                     Instruction
                 );
-                printf("%8x: %s\n", Addr, Instruction);
+                printf("%8x: ", Addr);
+                int k = 0;
+                for (; k < InstructionSize; k++)
+                {
+                    printf("%02x ", Program[Addr + k]);
+                }
+                for (; k < BytesPerLine; k++)
+                {
+                    printf("   ");
+                }
+                printf(" %s\n", Instruction);
+
                 Addr += InstructionSize;
                 i += InstructionSize;
             }
