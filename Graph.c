@@ -468,7 +468,8 @@ graph_state Graph_OnEntry(void)
         "e(x) = variable*x\n"
         "variable = g(10)\n"
 #else
-        "f(x) = m*x*x\n"
+        "f(x) = g(x)\n"
+        "g(x) = x*2\n"
         "m = 1/4"
 #endif
         ;

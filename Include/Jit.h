@@ -3,8 +3,8 @@
 
 #include "JitCommon.h"
 #include "JitError.h"
+#include "JitBackend.h"
 #include "DefTable.h"
-#include "Storage.h"
 
 typedef enum jit_compilation_flags 
 {
@@ -34,14 +34,16 @@ typedef struct jit
     def_table Global;
     jit_token Curr, Next;
 
-    i32 PrevVarEnd;
-    i32 PrevFnEnd;
+    i32 FnBlockHead;
+    i32 VarBlockHead;
+    i32 PrevFnBlock;
+    i32 PrevVarBlock;
     int IrOpByteCount;
     u8 *IrOp;
     jit_ir_data_manager IrData;
+    
 
-    jit_emitter Emitter;
-    jit_storage_manager Storage;
+    jit_backend Backend;
     jit_error Error;
 
     jit_scratchpad S;
@@ -61,7 +63,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags CompFlags, const char *Ex
 jit_init32 Jit_GetInit32(jit *Jit, const jit_result *Result);
 jit_init64 Jit_GetInit64(jit *Jit, const jit_result *Result);
 /* NOTE: every function compiled has double/float *GlobalMemory as first param */
-void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn);
+const void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn);
 
 
 #endif /* JIT_H */

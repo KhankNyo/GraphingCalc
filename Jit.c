@@ -1,5 +1,5 @@
 #include "JitCommon.h"
-#include "TargetEnv.h"
+#include "JitBackend.h"
 #include "Jit.h"
 #include "DefTable.h"
 
@@ -77,7 +77,7 @@ static void Jit_Scratchpad_PopRight(jit_scratchpad *S, int DataSize)
 
 
 
-jit_ir_stack Ir_Stack_Init(jit *Jit)
+static jit_ir_stack Ir_Stack_Init(jit *Jit)
 {
     return (jit_ir_stack) {
         .S = &Jit->S,
@@ -116,7 +116,7 @@ void Ir_Stack_PopMultiple(jit_ir_stack *Stack, int Count)
 
 
 
-jit_fnref_stack Ir_FnRef_Init(jit_scratchpad *S)
+static jit_fnref_stack Ir_FnRef_Init(jit_scratchpad *S)
 {
     return (jit_fnref_stack) {
         .S = S,
@@ -138,14 +138,14 @@ jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, u
     return Top;
 }
 
-jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef)
+static jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef)
 {
     jit_fnref *Top = Ir_FnRef_Top(FnRef, 0);
     Jit_Scratchpad_PopRight(FnRef->S, sizeof(jit_fnref));
     return Top;
 }
 
-int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
+static int Ir_FnRef_Count(const jit_fnref_stack *FnRef)
 {
     ASSERT(FnRef->S->RightCount >= FnRef->Base, "unreachable");
     return (FnRef->S->RightCount - FnRef->Base) / sizeof(jit_fnref);
@@ -415,46 +415,6 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
  *==========================================================*/
 
 
-int Ir_Op_GetArgSize(jit_ir_op_type Op)
-{
-    switch (Op)
-    {
-    case IR_OP_LESS:           /* Instruction(1) */
-    case IR_OP_GREATER:        /* Instruction(1) */
-    case IR_OP_GREATER_EQUAL:  /* Instruction(1) */
-    case IR_OP_LESS_EQUAL:     /* Instruction(1) */
-    case IR_OP_ADD:            /* Instruction(1) */
-    case IR_OP_SUB:            /* Instruction(1) */
-    case IR_OP_MUL:            /* Instruction(1) */
-    case IR_OP_DIV:            /* Instruction(1) */
-    case IR_OP_NEG:            /* Instruction(1) */
-    case IR_OP_CALL_ARG_START: /* Instruction(1) */
-    case IR_OP_SWAP:           /* Instruction(1) */
-    {
-        return 0;
-    } break;
-    case IR_OP_FN_END:         /* Instruction(1) + Offset(4) */
-    case IR_OP_VAR_END:        /* Instruction(1) + Offset(4) */
-    case IR_OP_STORE:          /* Instruction(1) + Offset(4) */
-    case IR_OP_LOAD:           /* Instruction(1) + LoadIndex(4) */
-    {
-        return 4;
-    } break;
-    case IR_OP_VAR_BEGIN:      /* Instruction(1) + (jit_variable *)(sizeof(ptr))*/
-    case IR_OP_FN_BEGIN:       /* Instruction(1) + (jit_function *)(sizeof(ptr)) */
-    {
-        return sizeof(void *);
-    } break;
-    case IR_OP_CALL:           /* Instruction(1) + FnNamePtr(8) + FnNameLen(4) + FnNameLine(4) + FnNameOffset(4) + ArgCount(4)  */
-    {
-        return sizeof(const char *) + 4*sizeof(i32);
-    } break;
-    }
-    UNREACHABLE();
-    return 0;
-}
-
-
 static u8 *Ir_Op_PushAndReserveArgSize(jit *Jit, jit_ir_op_type Type, int ArgSize)
 {
     Jit->IrOpByteCount += 1 + ArgSize;
@@ -484,21 +444,51 @@ static void Ir_Op_PushCall(jit *Jit, i32 ArgCount, const jit_token *FnName)
     MemCpy(ArgPtr + 8 + 2*4, &FnName->Offset, 4);
     MemCpy(ArgPtr + 8 + 3*4, &ArgCount, 4);
 }
-static void Ir_Op_PushOpPtr(jit *Jit, jit_ir_op_type Op, const void *Ptr)
+static i32 Ir_Op_StartBlock(jit *Jit, jit_ir_op_type Op, const void *Ptr)
 {
-    u8 *ArgPtr = Ir_Op_PushAndReserveArgSize(Jit, Op, sizeof(void *));
+    i32 Location = Jit->IrOpByteCount;
+    u8 *ArgPtr = Ir_Op_PushAndReserveArgSize(Jit, Op, Ir_Op_GetArgSize(Op));
     MemCpy(ArgPtr, &Ptr, sizeof(void *));
+    return Location;
+}
+static void Ir_Op_EndBlock(jit *Jit, i32 Location)
+{
+    ASSERT(Location < Jit->IrOpByteCount, "invalid location");
+    ASSERT(Location >= 0, "invalid location");
+
+    /* calculate block size */
+    i32 BlockSize = Jit->IrOpByteCount - Location;
+    ASSERT(IN_RANGE(0, BlockSize, UINT16_MAX), "block too big");
+    u16 ShortBlockSize = BlockSize;
+
+    u8 *PatchLocation = Jit->IrOp + Location + 1 + sizeof(void *);
+    MemCpy(
+        PatchLocation,
+        &ShortBlockSize, 
+        sizeof(ShortBlockSize)
+    );
+}
+static void Ir_Op_LinkBlock(jit *Jit, i32 PrevBlockLocation, i32 CurrBlockLocation)
+{
+    ASSERT(PrevBlockLocation < Jit->IrOpByteCount, "invalid location");
+    ASSERT(PrevBlockLocation >= 0, "invalid location");
+
+    /* calculate offset */
+    i32 Offset = CurrBlockLocation - (PrevBlockLocation + 1 + Ir_Op_GetArgSize(IR_OP_FN_BLOCK));
+    ASSERT(IN_RANGE(0, Offset, UINT16_MAX), "blocks too far from each other");
+    u16 ShortOffset = Offset;
+
+    /* patch the offset */
+    u8 *PatchLocation = Jit->IrOp + PrevBlockLocation + 1 + sizeof(void *) + sizeof(u16);
+    MemCpy(
+        PatchLocation, 
+        &ShortOffset, 
+        sizeof(ShortOffset)
+    );
 }
 static void Ir_Op_PushLoad(jit *Jit, i32 Index)
 {
     Ir_Op_PushOp4(Jit, IR_OP_LOAD, Index);
-}
-
-static void Ir_Op_PatchOp4(jit *Jit, int Location, i32 Arg)
-{
-    ASSERT(Location < Jit->IrOpByteCount, "invalid location");
-    ASSERT(Location >= 0, "invalid location");
-    MemCpy(Jit->IrOp + Location, &Arg, sizeof(Arg));
 }
 
 
@@ -638,7 +628,9 @@ static bool8 Jit_FindVariable(
         {
             if (NULL != OutVarLocation)
             {
-                *OutVarLocation = LocationFromMem(TargetEnv_GetParam(Data.As.Param.Index, Jit->Storage.DataSize)); 
+                *OutVarLocation = LocationFromMem(
+                    Backend_CalleeSideParamMem(Data.As.Param.Index)
+                ); 
             }
             return true;
         }
@@ -659,22 +651,23 @@ static bool8 Jit_FindVariable(
     return true;
 }
 
-jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalScopeBase, int LocalScopeVarCount)
+jit_location Ir_Data_GetLocation(jit *Jit, i32 DataIndex, int LocalScopeBase, int LocalScopeVarCount)
 {
+    jit_ir_data Data = Ir_GetData(&Jit->IrData, DataIndex);
     jit_location Result = { 0 };
-    switch (Data->Type)
+    switch (Data.Type)
     {
     case IR_DATA_CONST:
     {
         Result.Type = LOCATION_MEM;
-        Result.As.Mem = Storage_AllocateConst(&Jit->Storage, Data->As.Const);
+        Result.As.Mem = Backend_AllocateGlobal(&Jit->Backend, Data.As.Const);
     } break;
     case IR_DATA_VARREF:
     {
-        const char *Str = Data->As.VarRef.Str;
-        i32 StrLen = Data->As.VarRef.StrLen;
-        i32 Line = Data->As.VarRef.Line;
-        i32 Offset = Data->As.VarRef.Offset;
+        const char *Str = Data.As.VarRef.Str;
+        i32 StrLen = Data.As.VarRef.StrLen;
+        i32 Line = Data.As.VarRef.Line;
+        i32 Offset = Data.As.VarRef.Offset;
         if (!Jit_FindVariable(Jit, Str, StrLen, LocalScopeBase, LocalScopeVarCount, &Result))
         {
             Error_AtStr(&Jit->Error, Str, StrLen, Line, Offset, "Undefined variable.");
@@ -682,7 +675,9 @@ jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalSco
     } break;
     case IR_DATA_PARAM:
     {
-        Result = LocationFromMem(TargetEnv_GetParam(Data->As.Param.Index, Jit->Storage.DataSize));
+        Result = LocationFromMem(
+            Backend_CalleeSideParamMem(Data.As.Param.Index)
+        );
     } break;
     default:
     {
@@ -932,7 +927,9 @@ jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen)
     def_table_entry *Label = DefTable_Define(&Jit->Global, Name, NameLen, TYPE_FUNCTION);
     jit_function *Function = &Label->As.Function;
 
-    Function->Location = FN_LOCATION_UNDEFINED;
+    Function->Location = INVALID_FN_LOCATION;
+    Function->ParamStart = 0;
+    Function->ParamCount = 0;
     return Function;
 }
 
@@ -965,23 +962,33 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
     ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after parameter list.");
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after function declaration.");
 
-    /* housekeeping: patching previous function to here */
-    if (Jit->PrevFnEnd != FN_END_LAST)
-    {
-        Ir_Op_PatchOp4(Jit, Jit->PrevFnEnd - 4, Jit->IrOpByteCount - Jit->PrevFnEnd);
-    }
-    Ir_Op_PushOpPtr(Jit, IR_OP_FN_BEGIN, Function);
 
-    /* function body */
-    int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR, true);
-    if (Index != -1)
+    /* compile the block */
+    i32 BlockLocation = Ir_Op_StartBlock(Jit, IR_OP_FN_BLOCK, Function);
     {
-        Ir_Op_PushLoad(Jit, Index);
+        /* function body */
+        int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR, true);
+        if (Index != -1)
+        {
+            Ir_Op_PushLoad(Jit, Index);
+        }
+        Ir_Op_Push(Jit, IR_OP_RETURN);
     }
+    Ir_Op_EndBlock(Jit, BlockLocation);
 
-    /* function end */
-    Ir_Op_PushOp4(Jit, IR_OP_FN_END, FN_END_LAST);
-    Jit->PrevFnEnd = Jit->IrOpByteCount;
+
+    /* link previous function block to here if available */
+    if (Jit->PrevFnBlock != INVALID_BLOCK_LOCATION)
+    {
+        Ir_Op_LinkBlock(Jit, Jit->PrevFnBlock, BlockLocation);
+    }
+    /* update prev block */
+    Jit->PrevFnBlock = BlockLocation; 
+    /* update head if this block was the first function block */
+    if (INVALID_BLOCK_LOCATION == Jit->FnBlockHead)
+    {
+        Jit->FnBlockHead = BlockLocation;
+    }
 }
 
 static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
@@ -993,122 +1000,36 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after variable name.");
     
-    /* houskeeping, patching up last declared variable */
-    if (Jit->PrevVarEnd != VAR_END_LAST)
+
+    /* compile the block */
+    i32 BlockLocation = Ir_Op_StartBlock(Jit, IR_OP_VAR_BLOCK, Variable);
     {
-        Ir_Op_PatchOp4(Jit, Jit->PrevVarEnd - 4, Jit->IrOpByteCount - Jit->PrevVarEnd);
-    }
-    Ir_Op_PushOpPtr(Jit, IR_OP_VAR_BEGIN, Variable);
-
-    /* expression */
-    int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR, false);
-    if (Index != -1)
-    {
-        Ir_Op_PushLoad(Jit, Index);
-    }
-    /* store the result of the expression */
-    jit_location Global = {
-        .Type = LOCATION_MEM,
-        .As.Mem = Storage_AllocateGlobal(&Jit->Storage),
-    };
-    Ir_Op_PushOp4(Jit, IR_OP_STORE, Global.As.Mem.Offset);
-    Variable->Location = Global;
-
-    /* end variable decl */
-    Ir_Op_PushOp4(Jit, IR_OP_VAR_END, VAR_END_LAST);
-    Jit->PrevVarEnd = Jit->IrOpByteCount;
-}
-
-
-static void Jit_DisassembleCode(const u8 *Buffer, uint Start, uint End, uint BytesPerLine)
-{
-    char Instruction[64];
-    for (u64 i = Start; i < End;)
-    {
-        uint InstructionBytes = DisasmSingleInstruction(
-            i, 
-            Buffer + i, 
-            End - i, 
-            Instruction
+        /* expression */
+        int Index = Jit_Ir_CompileExpr(Jit, PREC_EXPR, false);
+        if (Index != -1)
+        {
+            Ir_Op_PushLoad(Jit, Index);
+        }
+        /* store the result of the expression */
+        Variable->Location = LocationFromMem(
+            Backend_AllocateGlobal(&Jit->Backend, 0)
         );
-
-
-        int Spaces = printf("%8x:  ", (u32)i);
-        uint k;
-        for (k = 0; k < InstructionBytes; k++)
-        {
-            printf("%02x ", Buffer[i + k]);
-        }
-        while (k < BytesPerLine)
-        {
-            printf("   ");
-            k++;
-        }
-
-        printf("%s\n", Instruction);
-
-        if (0xE9 == Buffer[i]) /* jmp instruction, jump to its dst and keep disassemble from there */
-        {
-            for (int k = 0; k < Spaces; k++)
-                printf(" ");
-            printf("...\n");
-            i32 Offset = 
-                (u32)Buffer[i + 1]
-                | (u32)Buffer[i + 2] << 8
-                | (u32)Buffer[i + 3] << 16
-                | (u32)Buffer[i + 4] << 24;
-            i += InstructionBytes + Offset;
-        }
-        else
-        {
-            i += InstructionBytes;
-        }
+        Ir_Op_PushOp4(Jit, IR_OP_STORE, Variable->Location.As.Mem.Offset);
     }
-}
+    Ir_Op_EndBlock(Jit, BlockLocation);
+    
 
-static void Jit_Disassemble(const jit *Jit)
-{
-    uint BytesPerLine = 10;
-    printf("=================================\n");
-    printf("         x64 disassembly:        \n");
-    printf("=================================\n");
-#if 1
-    def_table_entry *i = Jit->Global.Head;
-    const char *Type[] = { 
-        [TYPE_VARIABLE] = "variable",
-        [TYPE_FUNCTION] = "function"
-    };
-    while (i)
+    /* link previous function block to here if available */
+    if (Jit->PrevVarBlock != INVALID_BLOCK_LOCATION)
     {
-        strview Str = i->As.Str;
-        int Location = 0;
-        int ByteCount = 0;
-        switch (i->Type)
-        {
-        case TYPE_VARIABLE:
-        {
-            Location = i->As.Variable.InsLocation;
-            ByteCount = i->As.Variable.InsByteCount;
-        } break;
-        case TYPE_FUNCTION:
-        {
-            Location = i->As.Function.Location;
-            ByteCount = i->As.Function.InsByteCount;
-        } break;
-        }
-
-        printf("\n<%08x>: (%s) %.*s\n", Location, Type[i->Type], Str.Len, Str.Ptr);
-        Jit_DisassembleCode(Emitter_GetBuffer(&Jit->Emitter), Location, Location + ByteCount, BytesPerLine);
-        i = i->Next;
+        Ir_Op_LinkBlock(Jit, Jit->PrevVarBlock, BlockLocation);
     }
-#else
-    Jit_DisassembleCode(Emitter_GetBuffer(&Jit->Emitter), 0, Emitter_GetBufferSize(&Jit->Emitter), BytesPerLine);
-#endif
-
-    printf("Consts: \n");
-    for (uint i = 0; i < Jit->Storage.GlobalSize; i += Jit->Storage.DataSize)
+    /* update prev block */
+    Jit->PrevVarBlock = BlockLocation; 
+    /* update head if this block was the first variable block */
+    if (INVALID_BLOCK_LOCATION == Jit->VarBlockHead)
     {
-        printf("Global[%x] = %g\n", i, Storage_GetConst(&Jit->Storage, i));
+        Jit->VarBlockHead = BlockLocation;
     }
 }
 
@@ -1122,8 +1043,10 @@ static u32 Jit_Hash(const char *Str, int StrLen)
 
 static void Jit_Reset(jit *Jit, const char *Src, jit_compilation_flags Flags)
 {
-    Jit->PrevVarEnd = VAR_END_LAST;
-    Jit->PrevFnEnd = FN_END_LAST;
+    Jit->FnBlockHead = INVALID_BLOCK_LOCATION;
+    Jit->PrevFnBlock = INVALID_BLOCK_LOCATION;
+    Jit->VarBlockHead = INVALID_BLOCK_LOCATION;
+    Jit->PrevVarBlock = INVALID_BLOCK_LOCATION;
     Jit->Flags = Flags;
     Jit->Start = Src; 
     Jit->End = Src;
@@ -1151,8 +1074,7 @@ static void Jit_Reset(jit *Jit, const char *Src, jit_compilation_flags Flags)
 
     bool8 EmitFloat32Instructions = 0 != (Flags & JIT_COMPFLAG_FLOAT32);
     int FltSize = EmitFloat32Instructions? sizeof(float) : sizeof(double);
-    Storage_Reset(&Jit->Storage, FltSize);
-    Emitter_Reset(&Jit->Emitter, EmitFloat32Instructions);
+    Backend_Reset(&Jit->Backend, FltSize);
 }
 
 
@@ -1173,11 +1095,14 @@ uint Jit_Init(
     }
 
     *Jit = (jit) {
-        .Storage = Storage_Init(GlobalMemory, GlobalMemCapacity),
         .Global = DefTable_Init(DefTableArray, DefTableCapacity, Jit_Hash),
     };
     Jit_Scratchpad_Reset(&Jit->S, Scratchpad, ScratchpadCapacity);
-    Emitter_Init(&Jit->Emitter, ProgramMemory, ProgramMemCapacity);
+    Backend_Init(
+        &Jit->Backend, 
+        ProgramMemory, ProgramMemCapacity,
+        GlobalMemory, GlobalMemCapacity
+    );
     return 0;
 }
 
@@ -1209,7 +1134,7 @@ static void PrintVars(jit *Jit)
             printf("Param %d = '%.*s', offset=%d\n", 
                 i, 
                 Data.As.Param.StrLen, Data.As.Param.Str, 
-                TargetEnv_GetParam(Data.As.Param.Index, Jit->Storage.DataSize).Offset
+                Backend_CalleeSideParamMem(Data.As.Param.Index).Offset
             );
         } break;
         default: UNREACHABLE(); break;
@@ -1219,10 +1144,29 @@ static void PrintVars(jit *Jit)
     }
 }
 
-
-jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Location)
+static void Jit_TranslateIrBlocks(jit *Jit, i32 BlockHead, jit_ir_stack *Stack, jit_fnref_stack *FnRef)
 {
-    Jit_Reset(Jit, Location, Flags);
+    const u8 *IP = Jit->IrOp + BlockHead;
+    const u8 *End = Jit->IrOp + Jit->IrOpByteCount;
+    while (IP < End)
+    {
+        const u8 *NextBlock = Backend_TranslateBlock(
+            &Jit->Backend, 
+            IP, 
+            Stack, 
+            FnRef, 
+            Jit
+        );
+        if (NULL == NextBlock)
+            break;
+        IP = NextBlock;
+    }
+}
+
+
+jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Src)
+{
+    Jit_Reset(Jit, Src, Flags);
 
     do {
         /* definition */
@@ -1258,13 +1202,33 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Locati
     }
 #endif
 
-    Emitter_TranslateIr(Jit);
-    Jit_Disassemble(Jit);
+    /* translate blocks */
+    jit_ir_stack Stack = Ir_Stack_Init(Jit);
+    jit_fnref_stack FnRef = Ir_FnRef_Init(&Jit->S);
+    Jit_TranslateIrBlocks(Jit, Jit->FnBlockHead, &Stack, &FnRef);
+    {
+        jit_function *Function = Jit_DefineFunction(Jit, "#init", 5);
+        Function->Location = Backend_EmitFunctionEntry(&Jit->Backend);
+        Jit_TranslateIrBlocks(Jit, Jit->VarBlockHead, &Stack, &FnRef);
+        Backend_EmitFunctionExit(&Jit->Backend, Function->Location);
+        Function->InsByteCount = Backend_GetProgramSize(&Jit->Backend) - Function->Location;
+    }
+
+    /* resolve function calls */
+    int FnRefCount = Ir_FnRef_Count(&FnRef);
+    for (int i = 0; i < FnRefCount; i++)
+    {
+        jit_fnref *Ref = Ir_FnRef_Pop(&FnRef);
+        ASSERT(Ref->Function, "nullpltr");
+        Backend_PatchCall(&Jit->Backend, Ref->Location, Ref->Function->Location);
+    }
+
+    Backend_Disassemble(&Jit->Backend, &Jit->Global);
     if (Jit->Error.Available)
         goto ErrReturn;
 
     return (jit_result) {
-        .GlobalData = Jit->Storage.GlobalMemory,
+        .GlobalData = Backend_GetDataPtr(&Jit->Backend),
         .GlobalSymbol = Jit->Global.Head,
     };
 
@@ -1280,7 +1244,7 @@ jit_init32 Jit_GetInit32(jit *Jit, const jit_result *Result)
     def_table_entry *Init = Jit->Global.Tail;
     ASSERT(Init, "nullptr");
     ASSERT(Init->Type == TYPE_FUNCTION, "unreachable");
-    ASSERT(StrEqu(Init->As.Str.Ptr, "init", 4), "unreachable");
+    ASSERT(StrEqu(Init->As.Str.Ptr, "#init", 5), "unreachable");
     return (jit_init32)Jit_GetFunctionPtr(Jit, &Init->As.Function);
 }
 
@@ -1289,15 +1253,15 @@ jit_init64 Jit_GetInit64(jit *Jit, const jit_result *Result)
     def_table_entry *Init = Jit->Global.Tail;
     ASSERT(Init, "nullptr");
     ASSERT(Init->Type == TYPE_FUNCTION, "unreachable");
-    ASSERT(StrEqu(Init->As.Str.Ptr, "init", 4), "unreachable");
+    ASSERT(StrEqu(Init->As.Str.Ptr, "#init", 5), "unreachable");
     return (jit_init64)Jit_GetFunctionPtr(Jit, &Init->As.Function);
 }
 
-void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn)
+const void *Jit_GetFunctionPtr(jit *Jit, const jit_function *Fn)
 {
-    ASSERT(Fn->Location < Emitter_GetBufferSize(&Jit->Emitter), "Function with invalid location");
-    ASSERT(Fn->Location + Fn->InsByteCount <= Emitter_GetBufferSize(&Jit->Emitter), "Function with invalid size");
-    u8 *FnPtr = (u8 *)Emitter_GetBuffer(&Jit->Emitter) + Fn->Location;
+    ASSERT(Fn->Location < Backend_GetProgramSize(&Jit->Backend), "Function with invalid location");
+    ASSERT(Fn->Location + Fn->InsByteCount <= Backend_GetProgramSize(&Jit->Backend), "Function with invalid size");
+    const u8 *FnPtr = Backend_GetProgramPtr(&Jit->Backend) + Fn->Location;
     return FnPtr;
 }
 

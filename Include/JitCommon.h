@@ -138,7 +138,7 @@ typedef struct jit_ir_data_manager
     int ByteCount;
 } jit_ir_data_manager;
 
-jit_location Ir_Data_GetLocation(jit *Jit, const jit_ir_data *Data, int LocalScopeBase, int LocalScopeVarCount);
+jit_location Ir_Data_GetLocation(jit *Jit, i32 DataIndex, int LocalScopeBase, int LocalScopeVarCount);
 jit_ir_data Ir_GetData(jit_ir_data_manager *Data, i32 Offset);
 
 
@@ -152,7 +152,6 @@ typedef struct jit_ir_stack
     int Count;
 } jit_ir_stack;
 
-jit_ir_stack Ir_Stack_Init(jit *Jit);
 jit_location *Ir_Stack_Top(jit_ir_stack *Stack, int Offset);
 jit_location *Ir_Stack_Push(jit_ir_stack *Stack, const jit_location *Value);
 jit_location *Ir_Stack_Pop(jit_ir_stack *Stack);
@@ -174,16 +173,12 @@ typedef struct jit_fnref
     uint Location;
 } jit_fnref;
 
-jit_fnref_stack Ir_FnRef_Init(jit_scratchpad *S);
-int Ir_FnRef_Count(const jit_fnref_stack *FnRef);
 jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, uint CallLocation);
-jit_fnref *Ir_FnRef_Pop(jit_fnref_stack *FnRef);
 
 
 
-#define FN_LOCATION_UNDEFINED -1
-#define VAR_END_LAST 0
-#define FN_END_LAST 0
+#define INVALID_BLOCK_LOCATION INT32_MAX
+#define INVALID_FN_LOCATION INT32_MAX
 /* these instruction operates on a stack: 
  *  stack[n] denotes the elem on the n-th position in said stack
  *  push(elem): pushes an element onto the evaluation stack (ir stack) 
@@ -220,14 +215,72 @@ typedef enum jit_ir_op_type
                              * Value = pop();
                              * emit instruction to store Value to GlobalOffset
                              */
-    /* TODO: this is for debug info, might be best if the target platform handle this instead. */
-    IR_OP_FN_BEGIN,
-    IR_OP_FN_END,           
-    IR_OP_VAR_BEGIN,        
-    IR_OP_VAR_END,          
+    IR_OP_RETURN,           /* Value = pop();
+                             * emit instruction to return Value
+                             * */
+    IR_OP_FN_BLOCK,         /* jit_function *FnInfo = fetch(ptr)
+                             * u16 BlockSize = fetch(u16)
+                             * u16 NextBlock = fetch(u16)
+                             * */
+    IR_OP_VAR_BLOCK,        /* jit_variable *VarInfo = fetch(ptr)
+                             * u16 BlockSize = fetch(u16)
+                             * u16 NextBlock = fetch(u16) 
+                             * */
 } jit_ir_op_type;
 
-int Ir_Op_GetArgSize(jit_ir_op_type Op);
+static inline int Ir_Op_GetArgSize(jit_ir_op_type Op)
+{
+    switch (Op)
+    {
+    case IR_OP_LESS:           /* Instruction(1) */
+    case IR_OP_GREATER:        /* Instruction(1) */
+    case IR_OP_GREATER_EQUAL:  /* Instruction(1) */
+    case IR_OP_LESS_EQUAL:     /* Instruction(1) */
+    case IR_OP_ADD:            /* Instruction(1) */
+    case IR_OP_SUB:            /* Instruction(1) */
+    case IR_OP_MUL:            /* Instruction(1) */
+    case IR_OP_DIV:            /* Instruction(1) */
+    case IR_OP_NEG:            /* Instruction(1) */
+    case IR_OP_CALL_ARG_START: /* Instruction(1) */
+    case IR_OP_SWAP:           /* Instruction(1) */
+    case IR_OP_RETURN:         /* Instruction(1) */ /* also marks the end of a function block */
+    {
+        return 0;
+    } break;
+    case IR_OP_STORE:          /* Instruction(1) + Offset(4) */ /* also marks the end of a variable block */
+    case IR_OP_LOAD:           /* Instruction(1) + LoadIndex(4) */
+    {
+        return 4;
+    } break;
+
+    case IR_OP_VAR_BLOCK:      /* Instruction(1) + VarInfoPtr(sizeof(ptr)) + BlockSize(u16) + NextBlock(u16) */
+    case IR_OP_FN_BLOCK:       /* Instruction(1) + FnInfoPtr(sizeof(ptr)) + BlockSize(u16) + NextBlock(u16) */
+    {
+        return sizeof(void *) + 2*sizeof(u16);
+    } break;
+    case IR_OP_CALL:           /* Instruction(1) 
+                                  + FnNamePtr(8) 
+                                  + FnNameLen(4) 
+                                  + FnNameLine(4) 
+                                  + FnNameOffset(4) 
+                                  + ArgCount(4)  */
+    {
+        return sizeof(const char *) + 4*sizeof(i32);
+    } break;
+    }
+    UNREACHABLE();
+    return 0;
+}
+static inline const u8 *Ir_Op_GetNextBlock(const u8 *IP, u16 BlockOffset)
+{
+    if (0 == BlockOffset)
+        return NULL;
+    return IP + BlockOffset;
+}
+static inline const u8 *Ir_Op_GetBlockEnd(const u8 *IP, u16 BlockSize)
+{
+    return IP - (1 + Ir_Op_GetArgSize(IR_OP_FN_BLOCK)) + BlockSize;
+}
 
 jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, int LocalScopeVarCount);
 jit_function *Jit_FindFunction(jit *Jit, const char *FnNameStr, i32 StrLen, i32 Line, i32 Offset, int ArgCount);

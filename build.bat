@@ -8,8 +8,8 @@ if "clean"=="%1" (
 
     if not exist bin\ MKDIR bin
     PUSHD bin
-        cl /O2 /source-charset:utf-8 /Zi -I..\Include                   ^
-            /DTARGETENV_X64_WINDOWS                                     ^
+        cl /Od /source-charset:utf-8 /Zi -I..\Include                   ^
+            /DJIT_BACKEND_X64_WINDOWS                                     ^
             ..\x64_Windows_Build.c /FeGraph.exe gdi32.lib user32.lib    ^
             /link /subsystem:console /stack:0x1000000
     POPD
@@ -20,7 +20,7 @@ SETLOCAL EnableDelayedExpansion
 
     SET COMPILE_OPT= ^
         -O0 -march=native -ggdb -Wall -Wextra -Wpedantic -IInclude  ^
-        -DTARGETENV_X64_WINDOWS                                     ^
+        -DJIT_BACKEND_X64_WINDOWS                                     ^
         x64_Windows_Build.c -o bin\Graph.exe                        ^
         -lgdi32 -luser32 -lkernel32 -Wl,--stack,0x1000000"
 
