@@ -9,6 +9,9 @@
 
 typedef struct jit_backend_x64_windows
 {
+    /* eval stack */
+    jit_scratchpad *EvalStack;
+
     /* program memory */
     u8 *Program; 
     uint ProgramSize; 

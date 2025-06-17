@@ -6,7 +6,7 @@ Action                 | Possible error      | Result
 2) Resolve References  | Undefined reference | Code (instruction with references to all data)
                        | Invalid arg count   | Global data (const and global variables)
                        |                     | 
-3) Translate & Execute | Runtime             | Program's output
+3) Execute             | Runtime             | Program's output
 
 
 Data structures for 1): 
@@ -27,16 +27,11 @@ Reference record:
 
 
 Data structures for 2):
-Use 1)'s reference stack, pop check element and resolve their references until the stack is empty
+Use 1)'s reference stack, pop each element and resolve their references until the stack is empty
 For global references: look in the Global hash table
-    local references : look in the Local variable stack 
 
 
 Data structures for 3):
-
-
-
-
-            
+Backend's stack 
 
 

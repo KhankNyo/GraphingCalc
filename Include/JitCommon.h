@@ -82,7 +82,11 @@ typedef struct jit_scratchpad
     int LeftCount, RightCount, Capacity;
 } jit_scratchpad;
 
+void *Jit_Scratchpad_LeftPtr(jit_scratchpad *S);
+void *Jit_Scratchpad_PushLeft(jit_scratchpad *S, int DataSize);
+void *Jit_Scratchpad_PopLeft(jit_scratchpad *S, int DataSize);
 
+#if 0
 
 
 /*=======================================
@@ -198,13 +202,17 @@ typedef enum jit_ir_op_type
     IR_OP_MUL,              /* stack[1] = stack[1] * stack[0];                              pop(); */
     IR_OP_DIV,              /* stack[1] = stack[1] / stack[0];                              pop(); */
     IR_OP_NEG,              /* stack[0] = 0 - stack[0];                                     pop(); */
+
 #if 0
     IR_OP_LOAD,             /* push(Ir_GetData(fetch(i32))) */
 #else
     IR_OP_LOAD_GLOBAL,      /* push(localVarFromOffset(fetch(i32))) */
     IR_OP_LOAD_LOCAL,       /* push(globalVarFromOffset(fetch(i32))) */
 #endif
+
     IR_OP_CALL_ARG_START,   /* implementation might use this to spill call argument registers */
+
+#if 0
     IR_OP_CALL,             /* FnNameStr = fetch(const char *)
                              * FnNameLen = fetch(i32)
                              * FnNameLine = fetch(i32)
@@ -215,21 +223,38 @@ typedef enum jit_ir_op_type
                              * pop(FnArgCount);
                              * push(CallResult);
                              */
+#else
+    IR_OP_CALL,             /* jit_function *FunctionLocation = fetch(ptr) */
+#endif
+
     IR_OP_SWAP,             /* swap(stack[1], stack[0]) */
+#if 0
     IR_OP_STORE,            /* GlobalOffset = fetch(i32); 
                              * Value = pop();
                              * emit instruction to store Value to GlobalOffset
                              */
+#else
+    IR_OP_STORE_GLOBAL,     /* GlobalOffset = fetch(i32); 
+                             * Value = pop();
+                             * emit instruction to store Value to GlobalOffset
+                             */
+#endif
     IR_OP_RETURN,           /* Value = pop();
                              * emit instruction to return Value
                              * */
+
     IR_OP_FN_BLOCK,         /* jit_function *FnInfo = fetch(ptr)
                              * u16 BlockSize = fetch(u16)
                              * u16 NextBlock = fetch(u16)
+                             *
+                             * Fill in InsLocation and InsByteCount
                              * */
+
     IR_OP_VAR_BLOCK,        /* jit_variable *VarInfo = fetch(ptr)
                              * u16 BlockSize = fetch(u16)
                              * u16 NextBlock = fetch(u16) 
+                             *
+                             * Fill in InsLocation and InsByteCount
                              * */
 } jit_ir_op_type;
 
@@ -252,8 +277,9 @@ static inline int Bytecode_GetArgSize(jit_ir_op_type Op)
     {
         return 0;
     } break;
-    case IR_OP_STORE:          /* Instruction(1) + Offset(4) */ /* also marks the end of a variable block */
-    case IR_OP_LOAD:           /* Instruction(1) + LoadIndex(4) */
+    case IR_OP_STORE_GLOBAL:   /* Instruction(1) + Offset(4) */ /* also marks the end of a variable block */
+    case IR_OP_LOAD_GLOBAL:    /* Instruction(1) + LoadIndex(4) */
+    case IR_OP_LOAD_LOCAL:     /* Instruction(1) + LoadIndex(4) */
     {
         return 4;
     } break;
@@ -291,7 +317,7 @@ jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, 
 jit_function *Jit_FindFunction(jit *Jit, const char *FnNameStr, i32 StrLen, i32 Line, i32 Offset, int ArgCount);
 jit_function *Jit_DefineFunction(jit *Jit, const char *Name, int NameLen);
 
-
+#endif
 
 
 

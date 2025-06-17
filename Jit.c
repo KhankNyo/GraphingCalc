@@ -41,7 +41,7 @@ static int Jit_Scratchpad_BytesRemain(const jit_scratchpad *S)
     return (int)Result;
 }
 
-static void *Jit_Scratchpad_LeftPtr(jit_scratchpad *S)
+void *Jit_Scratchpad_LeftPtr(jit_scratchpad *S)
 {
     return S->Ptr + S->LeftCount;
 }
@@ -51,7 +51,7 @@ static void *Jit_Scratchpad_RightPtr(jit_scratchpad *S)
     return S->Ptr + S->Capacity - S->RightCount;
 }
 
-static void *Jit_Scratchpad_PushLeft(jit_scratchpad *S, int DataSize)
+void *Jit_Scratchpad_PushLeft(jit_scratchpad *S, int DataSize)
 {
     ASSERT(DataSize <= Jit_Scratchpad_BytesRemain(S), "bad data size");
     void *Ptr = Jit_Scratchpad_LeftPtr(S);
@@ -67,7 +67,7 @@ static void *Jit_Scratchpad_PushRight(jit_scratchpad *S, int DataSize)
     return Ptr;
 }
 
-static void *Jit_Scratchpad_PopLeft(jit_scratchpad *S, int DataSize)
+void *Jit_Scratchpad_PopLeft(jit_scratchpad *S, int DataSize)
 {
     ASSERT(DataSize <= S->LeftCount, "bad data size");
     S->LeftCount -= DataSize;
@@ -505,6 +505,7 @@ reference *RefStack_Pop(jit *Jit)
 /*========================================================== 
  *                      BYTECODE STACK
  *==========================================================*/
+#if 0
 static i32 Bytecode_Size(const jit *Jit)
 {
     return Jit->IrProgram.LeftCount;
@@ -540,12 +541,15 @@ static i32 Bytecode_PushCall(jit *Jit, u8 ArgCount)
     i32 Location = Jit->IrProgram.LeftCount;
     u8 *Arg = Bytecode_Push(Jit, IR_OP_CALL);
     Arg[0] = ArgCount;
-    memset(Arg + 1, 0, sizeof(i32)); /* set offset to 0 */
+    memset(Arg + 1, 0, sizeof(jit_function *));
 
     return Location;
 }
-static i32 Bytecode_StartBlock(jit *Jit, jit_ir_op_type, )
+static i32 Bytecode_StartBlock(jit *Jit, jit_ir_op_type Op, void *BlockInfo)
 {
+    u8 *Arg = Bytecode_Push(Jit, Op);
+    
+
 }
 static void Bytecode_EndBlock(jit *Jit)
 {
@@ -553,7 +557,7 @@ static void Bytecode_EndBlock(jit *Jit)
 static void Bytecode_LinkBlock(jit *Jit)
 {
 }
-
+#endif
 
 
 /*========================================================== 
@@ -618,7 +622,7 @@ static void EvalStack_LoadToRuntimeStack(jit *Jit, jit_eval_data *Data)
     /* must load constant to the runtime stack */
     {
         i32 GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, Data->As.Const);
-        Bytecode_PushLoadGlobal(Jit, GlobalIndex);
+        Backend_Op_LoadGlobal(&Jit->Backend, GlobalIndex);
     } break;
     }
 }
@@ -949,7 +953,7 @@ static jit_eval_data *Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         if (ConsumeIfNextTokenIs(Jit, TOK_LPAREN))
         {
             int ArgCount = 0;
-            Bytecode_Push(Jit, IR_OP_CALL_ARG_START);
+            Backend_Op_ArgStart(&Jit->Backend);
             if (TOK_RPAREN != NextToken(Jit).Type)
             {
                 /* compile the arguments and load them on the ir stack */
@@ -963,7 +967,7 @@ static jit_eval_data *Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
             ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after argument list.");
 
             /* emit instruction to call fn */
-            i32 CallLocation = Bytecode_PushCall(Jit, ArgCount);
+            i32 CallLocation = Backend_Op_Call(&Jit->Backend, ArgCount);
 
             /* save call location to reference record */
             RefStack_PushFunctionReference(
@@ -1000,7 +1004,7 @@ static jit_eval_data *Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
                     {
                         /* found the local variable being referenced, 
                          * emit instruction to load it */
-                        Bytecode_PushLoadLocal(Jit, i - Jit->LocalVarBase);
+                        Backend_Op_LoadLocal(&Jit->Backend, i - Jit->LocalVarBase);
                         /* load it onto the eval stack */
                         EvalStack_Push(Jit, EvalData_Dynamic());
                         return EvalStack_Top(Jit);
@@ -1012,7 +1016,7 @@ static jit_eval_data *Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
 
             /* global variable references will be resolved in the reference resolution stage */
             /* emit instruction to load the variable */
-            i32 RefLocation = Bytecode_PushLoadGlobal(Jit, -1);
+            i32 RefLocation = Backend_Op_LoadGlobal(&Jit->Backend, -1);
 
             /* push variable info onto the reference record */
             RefStack_PushVariableReference(Jit, 
@@ -1038,7 +1042,7 @@ static jit_eval_data *Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
         {
         case EVAL_DYNAMIC:
         {
-            Bytecode_Push(Jit, IR_OP_NEG);
+            Backend_Op_Neg(&Jit->Backend);
         } break;
         case EVAL_CONSTANT:
         {
@@ -1119,14 +1123,14 @@ static jit_eval_data *Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwar
         {
             switch (Oper)
             {
-            case TOK_PLUS:          Bytecode_Push(Jit, IR_OP_ADD); break;
-            case TOK_MINUS:         Bytecode_Push(Jit, IR_OP_SUB); break;
-            case TOK_STAR:          Bytecode_Push(Jit, IR_OP_MUL); break;
-            case TOK_SLASH:         Bytecode_Push(Jit, IR_OP_DIV); break;
-            case TOK_LESS:          Bytecode_Push(Jit, IR_OP_LESS); break;
-            case TOK_LESS_EQUAL:    Bytecode_Push(Jit, IR_OP_LESS_EQUAL); break;
-            case TOK_GREATER:       Bytecode_Push(Jit, IR_OP_GREATER); break;
-            case TOK_GREATER_EQUAL: Bytecode_Push(Jit, IR_OP_GREATER_EQUAL); break;
+            case TOK_PLUS:          Backend_Op_Add(&Jit->Backend); break;
+            case TOK_MINUS:         Backend_Op_Sub(&Jit->Backend); break;
+            case TOK_STAR:          Backend_Op_Mul(&Jit->Backend); break;
+            case TOK_SLASH:         Backend_Op_Div(&Jit->Backend); break;
+            case TOK_LESS:          Backend_Op_Less(&Jit->Backend); break;
+            case TOK_GREATER:       Backend_Op_Greater(&Jit->Backend); break;
+            case TOK_LESS_EQUAL:    Backend_Op_LessOrEqual(&Jit->Backend); break;
+            case TOK_GREATER_EQUAL: Backend_Op_GreaterOrEqual(&Jit->Backend); break;
             default:
             {
                 UNREACHABLE();
@@ -1240,7 +1244,7 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
         /* function body */
         jit_eval_data *Result = Jit_ParseExpr(Jit, PREC_EXPR, true);
         EvalStack_LoadToRuntimeStack(Jit, Result);
-        Bytecode_Push(Jit, IR_OP_RETURN);
+        Backend_Op_Return(Jit);
     }
     Bytecode_EndBlock(Jit, BlockLocation);
 
@@ -1281,7 +1285,7 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
         /* dynamic expression, pop runtime stack and load to global */
         {
             Variable->GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, 0.0);
-            Bytecode_PushStoreGlobal(Jit, Variable->GlobalIndex);
+            Backend_Op_StoreGlobal(&Jit->Backend, Variable->GlobalIndex);
         } break;
         case EVAL_CONSTANT:
         /* constant expression, no instructions needed */
