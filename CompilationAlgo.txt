@@ -1,19 +1,18 @@
 Action                 | Possible error      | Result
-1) Compilation         | Syntax              | IR bytecode (instructions with references to known data only)
+1) Compilation         | Syntax              | Code (instructions with references to known data only)
                        |                     | Reference record
                        |                     | Global data (const only?)
                        |                     | 
-2) Resolve References  | Undefined reference | IR bytecode (instruction with references to all data)
+2) Resolve References  | Undefined reference | Code (instruction with references to all data)
                        | Invalid arg count   | Global data (const and global variables)
                        |                     | 
 3) Translate & Execute | Runtime             | Program's output
 
 
 Data structures for 1): 
-IR program: [left] -- IR Bytecode stack    --> ... <-- Reference record/stack                    -- [right]
-IR data:    [left] -- Typecheck/eval stack --> ... <-- Local variables|Runtime/Translation stack -- [right]
-Local variables: lives to the right of IR data stack. WILL BE OVERWRITTEN in 3)
-Global variables/functions: lives in a dedicated Global hash table
+Frontend stack: [left] == Typecheck/eval stack => ... <= Reference record stack [right] 
+                [base] == Local variables      => ...
+Backend stack:  [base] == eval stack           => ...
 Reference record: 
   function: 
       name, line, offset 
@@ -34,7 +33,6 @@ For global references: look in the Global hash table
 
 
 Data structures for 3):
-Runtime/Translation stack (reuses Local variable stack since it has served its purpose in 1) and 2))
 
 
 
