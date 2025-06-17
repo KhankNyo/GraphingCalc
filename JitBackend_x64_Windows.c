@@ -207,7 +207,10 @@ void Backend_Reset(jit_backend *Backend, int DataSize)
     }
     else UNREACHABLE();
 
-    Backend->One = Backend_AllocateGlobal(Backend, 1.0);
+    Backend->One = (jit_mem) {
+        .BaseReg = Backend_GetGlobalPtrReg(),
+        .Offset = Backend_AllocateGlobal(Backend, 1.0),
+    };
 }
 
 
@@ -440,12 +443,6 @@ static void Backend_DeallocateReg(jit_backend *Backend, jit_reg Reg)
 
 
 
-static i32 Backend_PushGlobal(jit_backend *Backend)
-{
-    i32 Offset = Backend->GlobalDataSize;
-    Backend->GlobalDataSize += Backend->DataSize;
-    return Offset;
-}
 
 static i32 Backend_PushStack(jit_backend *Backend, int DataCount)
 {
@@ -466,23 +463,27 @@ static void Backend_PopStack(jit_backend *Backend, int DataCount)
     Backend->StackSize -= PopSize;
 }
 
-jit_mem Backend_AllocateGlobal(jit_backend *Backend, double InitialValue)
+static i32 Backend_PushGlobal(jit_backend *Backend)
 {
-    jit_mem Mem = {
-        .BaseReg = RCX,
-        .Offset = Backend_PushGlobal(Backend),
-    };
+    i32 Offset = Backend->GlobalDataSize;
+    Backend->GlobalDataSize += Backend->DataSize;
+    return Offset;
+}
+
+i32 Backend_AllocateGlobal(jit_backend *Backend, double InitialValue)
+{
+    i32 Offset = Backend_PushGlobal(Backend);
     u8 *Global = Backend->GlobalData;
     if (Backend->DataSize == sizeof(double))
     {
-        MemCpy(Global + Mem.Offset, &InitialValue, sizeof(double));
+        MemCpy(Global + Offset, &InitialValue, sizeof(double));
     }
     else
     {
         float Value = InitialValue;
-        MemCpy(Global + Mem.Offset, &Value, sizeof(float));
+        MemCpy(Global + Offset, &Value, sizeof(float));
     }
-    return Mem;
+    return Offset;
 }
 
 static jit_mem Backend_AllocateStack(jit_backend *Backend)
@@ -634,7 +635,7 @@ const u8 *Backend_TranslateBlock(
     jit_function *Fn = NULL;
     jit_variable *Var = NULL;
     const u8 *IP = IrBlock;
-    const u8 *End = IP + 1 + Ir_Op_GetArgSize(IR_OP_FN_BLOCK);
+    const u8 *End = IP + 1 + Bytecode_GetArgSize(IR_OP_FN_BLOCK);
     const u8 *NextBlock = NULL;
     while (IP < End)
     {
@@ -648,8 +649,8 @@ const u8 *Backend_TranslateBlock(
             u16 BlockSize = FETCH(u16);
             u16 NextBlockOffset = FETCH(u16);
 
-            NextBlock = Ir_Op_GetNextBlock(IP, NextBlockOffset);
-            End = Ir_Op_GetBlockEnd(IP, BlockSize);
+            NextBlock = Bytecode_GetNextBlock(IP, NextBlockOffset);
+            End = Bytecode_GetBlockEnd(IP, BlockSize);
 
             Var->InsLocation = Backend->ProgramSize;
         } break;
@@ -659,8 +660,8 @@ const u8 *Backend_TranslateBlock(
             u16 BlockSize = FETCH(u16);
             u16 NextBlockOffset = FETCH(u16);
 
-            NextBlock = Ir_Op_GetNextBlock(IP, NextBlockOffset);
-            End = Ir_Op_GetBlockEnd(IP, BlockSize);
+            NextBlock = Bytecode_GetNextBlock(IP, NextBlockOffset);
+            End = Bytecode_GetBlockEnd(IP, BlockSize);
 
             Fn->Location = Backend_EmitFunctionEntry(Backend);
 

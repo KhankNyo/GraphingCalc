@@ -63,7 +63,7 @@ typedef struct jit_variable
 {
     strview Name;
     int InsLocation, InsByteCount;
-    jit_location Location;
+    i32 GlobalIndex;
 } jit_variable;
 
 typedef struct jit_function 
@@ -188,7 +188,7 @@ jit_fnref *Ir_FnRef_Push(jit_fnref_stack *FnRef, const jit_function *Function, u
  *                  then IP += sizeof(c_type) */
 typedef enum jit_ir_op_type 
 {
-    /* for instruction argument size, see Ir_Op_GetArgSize() */
+    /* for instruction argument size, see Bytecode_GetArgSize() */
     IR_OP_LESS,             /* stack[1] = if (stack[1] < stack[0])  -> 1.0f else -> 0.0f;   pop(); */
     IR_OP_LESS_EQUAL,       /* stack[1] = if (stack[1] <= stack[0]) -> 1.0f else -> 0.0f;   pop(); */
     IR_OP_GREATER,          /* stack[1] = if (stack[1] > stack[0])  -> 1.0f else -> 0.0f;   pop(); */
@@ -198,7 +198,12 @@ typedef enum jit_ir_op_type
     IR_OP_MUL,              /* stack[1] = stack[1] * stack[0];                              pop(); */
     IR_OP_DIV,              /* stack[1] = stack[1] / stack[0];                              pop(); */
     IR_OP_NEG,              /* stack[0] = 0 - stack[0];                                     pop(); */
+#if 0
     IR_OP_LOAD,             /* push(Ir_GetData(fetch(i32))) */
+#else
+    IR_OP_LOAD_GLOBAL,      /* push(localVarFromOffset(fetch(i32))) */
+    IR_OP_LOAD_LOCAL,       /* push(globalVarFromOffset(fetch(i32))) */
+#endif
     IR_OP_CALL_ARG_START,   /* implementation might use this to spill call argument registers */
     IR_OP_CALL,             /* FnNameStr = fetch(const char *)
                              * FnNameLen = fetch(i32)
@@ -228,7 +233,7 @@ typedef enum jit_ir_op_type
                              * */
 } jit_ir_op_type;
 
-static inline int Ir_Op_GetArgSize(jit_ir_op_type Op)
+static inline int Bytecode_GetArgSize(jit_ir_op_type Op)
 {
     switch (Op)
     {
@@ -271,15 +276,15 @@ static inline int Ir_Op_GetArgSize(jit_ir_op_type Op)
     UNREACHABLE();
     return 0;
 }
-static inline const u8 *Ir_Op_GetNextBlock(const u8 *IP, u16 BlockOffset)
+static inline const u8 *Bytecode_GetNextBlock(const u8 *IP, u16 BlockOffset)
 {
     if (0 == BlockOffset)
         return NULL;
     return IP + BlockOffset;
 }
-static inline const u8 *Ir_Op_GetBlockEnd(const u8 *IP, u16 BlockSize)
+static inline const u8 *Bytecode_GetBlockEnd(const u8 *IP, u16 BlockSize)
 {
-    return IP - (1 + Ir_Op_GetArgSize(IR_OP_FN_BLOCK)) + BlockSize;
+    return IP - (1 + Bytecode_GetArgSize(IR_OP_FN_BLOCK)) + BlockSize;
 }
 
 jit_location Jit_IrDataAsLocation(jit *Jit, const u8 *Data, int LocalScopeBase, int LocalScopeVarCount);

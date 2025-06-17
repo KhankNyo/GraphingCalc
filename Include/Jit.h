@@ -38,6 +38,7 @@ typedef struct jit
     i32 VarBlockHead;
     i32 PrevFnBlock;
     i32 PrevVarBlock;
+#if 0
     int IrOpByteCount;
     u8 *IrOp;
     jit_ir_data_manager IrData;
@@ -47,6 +48,12 @@ typedef struct jit
     jit_error Error;
 
     jit_scratchpad S;
+#else
+    jit_backend Backend;
+    jit_error Error;
+    jit_scratchpad IrProgram, IrData;
+    i32 LocalVarBase, LocalVarEnd;
+#endif
 } jit;
 
 /* returns 0 on success, otherwise returns minimum scratch pad memory size */

@@ -30,7 +30,7 @@ void Backend_Init(
 void Backend_Reset(jit_backend *Backend, int DataSize);
 
 /* get and set */
-jit_mem Backend_AllocateGlobal(jit_backend *Backend, double InitialValue);
+i32 Backend_AllocateGlobal(jit_backend *Backend, double InitialValue);
 i32 Backend_GetProgramSize(const jit_backend *Backend);
 const u8 *Backend_GetProgramPtr(const jit_backend *Backend);
 void *Backend_GetDataPtr(jit_backend *Backend);
