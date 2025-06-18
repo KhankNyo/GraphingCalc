@@ -27,6 +27,43 @@ typedef enum sse_cmp_type
     CMP_ORD,
 } sse_cmp_type;
 
+typedef enum reg_index 
+{
+    RAX = 0, 
+    RCX, 
+    RDX, 
+    RBX, 
+    RSP, 
+    RBP, 
+    RSI, 
+    RDI,
+} reg_index; 
+
+/*=======================================
+ *              jit_location 
+ *======================================= */
+typedef enum jit_location_type 
+{
+    LOCATION_MEM = 1,
+    LOCATION_REG,
+} jit_location_type;
+typedef i8 jit_reg;
+typedef struct jit_mem 
+{
+    i32 Offset;
+    jit_reg BaseReg;
+} jit_mem;
+typedef struct jit_location
+{
+    jit_location_type Type;
+    union {
+        jit_mem Mem;
+        jit_reg Reg;
+    } As;
+} jit_location;
+#define JIT_REG_INVALID -1
+
+
 
 typedef struct disasm_data
 {
@@ -80,6 +117,103 @@ static const char *sCmpType[] = {
 
 static jit_reg Backend_AllocateReg(jit_backend *Backend);
 static void Backend_DeallocateReg(jit_backend *Backend, jit_reg Reg);
+
+
+static bool8 Backend_x64_IsAVXSupported(void);
+
+
+#if (defined(_MSC_VER) && !defined(__clang__) /* clang is real funny */)\
+|| (defined(_WIN32) && defined(__TINYC__)) /* tcc for windows */
+
+static void Backend_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
+{
+    int Bitfield[4];
+    __cpuid(Bitfield, Feature);
+    *OutEAX = Bitfield[0];
+    *OutEBX = Bitfield[1];
+    *OutECX = Bitfield[2];
+    *OutEDX = Bitfield[3];
+}
+
+#else /* non-msvc compiler targeting windows */
+#   include <cpuid.h>
+
+static void Backend_x64_GetCPUID(u32 Feature, u32 *OutEAX, u32 *OutEBX, u32 *OutECX, u32 *OutEDX)
+{
+    __get_cpuid(Feature, OutEAX, OutEBX, OutECX, OutEDX);
+}
+
+#endif /* (_MSC_VER && !__clang__) || (_WIN32 && __TINYC__) */
+
+
+static bool8 Backend_x64_IsAVXSupported(void)
+{
+    u32 EAX, 
+        EBX, 
+        ECX = 0, 
+        EDX;
+    Backend_x64_GetCPUID(1, &EAX, &EBX, &ECX, &EDX);
+    return (ECX & (1 << 20)) != 0;
+}
+
+static int Backend_GetArgRegCount(void)
+{
+    /* rcx taken as global ptr reg */
+    /* xmm1 = arg0  */
+    /* xmm2 = arg1  */
+    /* xmm3 = arg2  */
+    /* rest are on stack */
+    return 3;
+}
+static bool8 Backend_IsArgumentInReg(int ArgIndex)
+{
+    return ArgIndex < Backend_GetArgRegCount();
+}
+static jit_reg Backend_CallerSideArgReg(int ArgIndex)
+{
+    ASSERT(Backend_IsArgumentInReg(ArgIndex), "unreachable");
+    return ArgIndex + 1;
+}
+static jit_mem Backend_CallerSideArgMem(int ArgIndex)
+{
+    ASSERT(!Backend_IsArgumentInReg(ArgIndex), "unreachable");
+    return (jit_mem) {
+        .BaseReg = RSP,
+        .Offset = (ArgIndex + 1)*8, /* arg0 = global ptr (rcx) */
+    };
+}
+static jit_mem Backend_CalleeSideParamMem(int ArgIndex)
+{
+    return (jit_mem) {
+        .BaseReg = RBP,
+        .Offset = 0x10 + (ArgIndex + 1)*8, /* arg0 = global ptr (rcx) */
+    };
+}
+
+
+
+static jit_location LocationFromReg(jit_reg R)
+{
+    return (jit_location) {
+        .Type = LOCATION_REG,
+        .As.Reg = R,
+    };
+}
+
+static jit_location LocationFromMem(jit_mem Mem)
+{
+    return (jit_location) {
+        .Type = LOCATION_MEM,
+        .As.Mem = Mem,
+    };
+}
+
+/* ms x64 calling conv */
+static int Backend_GlobalPtrReg(void)
+{
+    return RCX;
+}
+
 
 
 static int EmitCode(jit_backend *Backend, int Count, ...)
@@ -239,10 +373,7 @@ void Backend_Reset(jit_backend *Backend, int DataSize)
     }
     else UNREACHABLE();
 
-    Backend->One = (jit_mem) {
-        .BaseReg = Backend_GetGlobalPtrReg(),
-        .Offset = Backend_AllocateGlobal(Backend, 1.0),
-    };
+    Backend->One = Backend_AllocateGlobal(Backend, 1.0);
 }
 
 
@@ -350,7 +481,7 @@ static void Backend_EmitCmpReg(jit_backend *Backend, jit_reg Dst, jit_reg B, sse
     EmitCode(Backend, 1, CmpType);
 
     /* movd tmp, 1.0f */
-    Backend_EmitLoad(Backend, B, Backend->One.BaseReg, Backend->One.Offset);
+    Backend_EmitLoad(Backend, B, Backend_GlobalPtrReg(), Backend->One);
 
     /* andps dst, tmp */
     EmitCode(Backend, 3, 0x0F, 0x54, MODRM(3, Dst, B));
@@ -359,7 +490,7 @@ static void Backend_EmitCmpReg(jit_backend *Backend, jit_reg Dst, jit_reg B, sse
 
 
 
-uint Backend_EmitFunctionEntry(jit_backend *Backend)
+static uint Backend_EmitFunctionEntry(jit_backend *Backend)
 {
     /* reset stack */
     Backend->MaxStackSize = 0;
@@ -385,7 +516,7 @@ uint Backend_EmitFunctionEntry(jit_backend *Backend)
 }
 
 
-void Backend_EmitFunctionExit(jit_backend *Backend, uint EntryLocation)
+static void Backend_EmitFunctionExit(jit_backend *Backend, uint EntryLocation)
 {
     uint PrologueSize = 1 + 3 + 3 + 4;
     ASSERT(EntryLocation + PrologueSize <= Backend->ProgramSize, "invalid location");
@@ -421,7 +552,6 @@ static uint Backend_EmitCall(jit_backend *Backend, uint FunctionLocation)
  *                           Register allocation
  * ====================================================================== */
 
-#define SPILL_ALL INT_MAX
 static void Backend_SpillReg(jit_backend *Backend, int RegCount);
 
 static jit_reg Backend_TryAllocateReg(jit_backend *Backend)
@@ -461,9 +591,9 @@ static i32 Backend_PushStack(jit_backend *Backend, int DataCount)
     /* allocate some stack space, 
      * ensure max stack size is always aligned to 16-byte boundary (required by windows) */
     int Size = DataCount * Backend->DataSize;
-    Backend->StackSize += Size;
-    int AlignedStackSize = ROUND_UP_TO_MULTIPLE(Backend->StackSize, 16);
-    Backend->MaxStackSize = MAX(AlignedStackSize, Backend->MaxStackSize);
+    Backend->StackSize += ROUND_UP_TO_MULTIPLE(Size, 8);
+    int AlignedStackSizeSSE = ROUND_UP_TO_MULTIPLE(Backend->StackSize, 16);
+    Backend->MaxStackSize = MAX(AlignedStackSizeSSE, Backend->MaxStackSize);
 
     return Backend->StackSize;
 }
@@ -485,7 +615,6 @@ static i32 Backend_PushGlobal(jit_backend *Backend)
 i32 Backend_AllocateGlobal(jit_backend *Backend, double InitialValue)
 {
     i32 Offset = Backend_PushGlobal(Backend);
-    printf("%d, %f\n", Offset, InitialValue);
     u8 *Global = Backend->GlobalData;
     if (Backend->DataSize == sizeof(double))
     {
@@ -631,269 +760,6 @@ static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
 
 
 
-
-#if 0
-
-/* ======================================================================
- *                           Ir translation
- * ====================================================================== */
-
-#define IR_CONSUME_BYTE() *IP++
-#define IR_CONSUME_AND_INTERPRET(datatype) ((IP += sizeof(datatype)), (datatype *)(IP - sizeof(datatype)))
-#define FETCH(typename) *IR_CONSUME_AND_INTERPRET(typename)
-
-const u8 *Backend_TranslateBlock(
-    jit_backend *Backend, 
-    const u8 *IrBlock, 
-    jit_ir_stack *Stack,
-    jit_fnref_stack *FnRef,
-    jit *Jit)
-{
-    jit_function *Fn = NULL;
-    jit_variable *Var = NULL;
-    const u8 *IP = IrBlock;
-    const u8 *End = IP + 1 + Bytecode_GetArgSize(IR_OP_FN_BLOCK);
-    const u8 *NextBlock = NULL;
-    while (IP < End)
-    {
-        jit_ir_op_type Op = IR_CONSUME_BYTE();
-
-        switch (Op)
-        {
-        case IR_OP_VAR_BLOCK:
-        {
-            Var = *IR_CONSUME_AND_INTERPRET(jit_variable *);
-            u16 BlockSize = FETCH(u16);
-            u16 NextBlockOffset = FETCH(u16);
-
-            NextBlock = Bytecode_GetNextBlock(IP, NextBlockOffset);
-            End = Bytecode_GetBlockEnd(IP, BlockSize);
-
-            Var->InsLocation = Backend->ProgramSize;
-        } break;
-        case IR_OP_FN_BLOCK:
-        {
-            Fn = *IR_CONSUME_AND_INTERPRET(jit_function *);
-            u16 BlockSize = FETCH(u16);
-            u16 NextBlockOffset = FETCH(u16);
-
-            NextBlock = Bytecode_GetNextBlock(IP, NextBlockOffset);
-            End = Bytecode_GetBlockEnd(IP, BlockSize);
-
-            Fn->Location = Backend_EmitFunctionEntry(Backend);
-
-            /* move arguments to stack */
-            for (int i = 0; i < Fn->ParamCount && Backend_IsArgumentInReg(i); i++)
-            {
-                jit_reg ArgReg = Backend_CallerSideArgReg(i);
-                jit_mem Param = Backend_CalleeSideParamMem(i);
-                Backend_EmitStore(Backend, ArgReg, Param);
-            }
-        } break;
-        case IR_OP_STORE: /* store value on top of the eval stack to op store's param */
-        {
-            i32 Offset = FETCH(i32);
-
-            jit_reg Src = Backend_EmitMoveToReg(Backend, Stack, Ir_Stack_Pop(Stack));
-            jit_mem Dst = {
-                .BaseReg = Backend_GetGlobalPtrReg(),
-                .Offset = Offset,
-            };
-            Backend_EmitStore(Backend, Src, Dst);
-            Backend_DeallocateReg(Backend, Src);
-
-            Var->InsByteCount = Backend->ProgramSize - Var->InsLocation;
-            Var = NULL;
-        } break;
-        case IR_OP_RETURN:
-        {
-            /* copy the topmost elem of the eval stack into return register (xmm0) */
-            jit_location *ReturnValue = Ir_Stack_Pop(Stack);
-            Backend_EmitCopyToReg(Backend, XMM(0), ReturnValue);
-            if (LOCATION_REG == ReturnValue->Type) /* return value had a diff register to the actual return register */
-            {
-                Backend_DeallocateReg(Backend, ReturnValue->As.Reg);
-            }
-
-            /* emit return */
-            Backend_EmitFunctionExit(Backend, Fn->Location);
-
-            /* debug info */
-            Fn->InsByteCount = Backend->ProgramSize - Fn->Location;
-            Fn = NULL;
-        } break;
-
-        case IR_OP_SWAP:
-        {
-            ASSERT(Stack->Count >= 2, "size");
-            /* swap */
-            jit_location *Left = Ir_Stack_Top(Stack, 0);
-             jit_location *Right = Ir_Stack_Top(Stack, 1);
-            SWAP(jit_location, *Left, *Right);
-        } break;
-        case IR_OP_LOAD:
-        {
-            i32 LoadIndex = FETCH(i32);
-
-            int ParamStart = 0;
-            int ParamCount = 0;
-            if (Fn)
-            {
-                ParamStart = Fn->ParamStart;
-                ParamCount = Fn->ParamCount;
-            }
-            jit_location DataLocation = Ir_Data_GetLocation(Jit, LoadIndex, ParamStart, ParamCount);
-            Ir_Stack_Push(Stack, &DataLocation);
-        } break;
-        case IR_OP_CALL_ARG_START:
-        {
-            /* make all previous location on the stack a memory location */
-            Backend_SpillReg(Backend, Stack, SPILL_ALL);
-        } break;
-        case IR_OP_CALL:
-        {
-#if 0
-            /* get args */
-            const char *FnName = *IR_CONSUME_AND_INTERPRET(const char *);
-            i32 FnNameLen = FETCH(i32);
-            i32 FnNameLine = FETCH(i32);
-            i32 FnNameOffset = FETCH(i32);
-            i32 FnArgCount = FETCH(i32);
-
-            const jit_function *Function = Jit_FindFunction(
-                Jit, 
-                FnName, 
-                FnNameLen, 
-                FnNameLine, 
-                FnNameOffset, 
-                FnArgCount
-            );
-            if (!Function)
-                break;
-
-            /* emit the args and call itself */
-            /* TODO: couple call and arguments together */
-            Backend_EmitCallArgs(Backend, Stack, Function->ParamCount);
-            uint CallLocation = Backend_EmitCall(Backend, Function->Location);
-            if (INVALID_FN_LOCATION == Function->Location)
-            {
-                Ir_FnRef_Push(FnRef, Function, CallLocation);
-            }
-
-            /* return */
-            Backend_ForceAllocateReg(Backend, XMM(0));
-            jit_location Result = LocationFromReg(XMM(0));
-
-            /* pop arguments and push return value on the eval stack */
-            Ir_Stack_PopMultiple(Stack, Function->ParamCount);
-            Ir_Stack_Push(Stack, &Result);
-#else
-            int ArgCount = FETCH(u8);
-            jit_function *Callee = FETCH(jit_function *);
-            ASSERT(Callee, "nullptr");
-            ASSERT(ArgCount == Callee->ParamCount, "unreachable");
-
-            /* emit args */
-            Backend_EmitCallArgs(Backend, Stack, Callee->ParamCount);
-            /* emit call instruction */
-            uint CallLocation = Backend_EmitCall(Backend, 0);
-            /* save location for later patching */
-            if (INVALID_FN_LOCATION == Callee->Location)
-            {
-                Ir_FnRef_Push(FnRef, Callee, CallLocation);
-            }
-
-            /* return */
-            Backend_ForceAllocateReg(Backend, XMM(0));
-            jit_location Result = LocationFromReg(XMM(0));
-
-            /* pop arguments and push return value on the eval stack */
-            Ir_Stack_PopMultiple(Stack, Callee->ParamCount);
-            Ir_Stack_Push(Stack, &Result);
-#endif
-        } break;
-        case IR_OP_ADD:
-        case IR_OP_SUB:
-        case IR_OP_MUL:
-        case IR_OP_DIV:
-        {
-            jit_location *Right = Ir_Stack_Pop(Stack);
-            jit_location *Left = Ir_Stack_Pop(Stack);
-
-            /* if commutative and right was in reg first, swap operands */
-            if ((IR_OP_ADD == Op || IR_OP_MUL == Op)
-            && LOCATION_REG == Right->Type)
-            {
-                SWAP(jit_location *, Left, Right);
-            }
-
-            jit_location Result = LocationFromReg(
-                Backend_EmitMoveToReg(Backend, Stack, Left)
-            );
-            if (Right->Type == LOCATION_REG)
-            {
-                Backend_DeallocateReg(Backend, Right->As.Reg);
-            }
-
-#define OP(op_name, left_reg, right_expr) do {\
-    if (LOCATION_MEM == (right_expr)->Type)\
-        Backend_Emit ## op_name (Backend, left_reg, (right_expr)->As.Mem.BaseReg, (right_expr)->As.Mem.Offset);\
-    else Backend_Emit ## op_name ## Reg(Backend, left_reg, (right_expr)->As.Reg);\
-} while (0)
-            switch (Op)
-            {
-            case IR_OP_ADD: OP(Add, Result.As.Reg, Right); break;
-            case IR_OP_SUB: OP(Sub, Result.As.Reg, Right); break;
-            case IR_OP_MUL: OP(Mul, Result.As.Reg, Right); break;
-            case IR_OP_DIV: OP(Div, Result.As.Reg, Right); break;
-            default: 
-            {
-                UNREACHABLE();
-            } break;
-            }
-
-            Ir_Stack_Push(Stack, &Result);
-        } break;
-        case IR_OP_LESS:
-        case IR_OP_GREATER:
-        case IR_OP_LESS_EQUAL:
-        case IR_OP_GREATER_EQUAL:
-        {
-            jit_location *RightLocation = Ir_Stack_Pop(Stack);
-            jit_location *LeftLocation = Ir_Stack_Pop(Stack);
-            jit_reg Left = Backend_EmitMoveToReg(Backend, Stack, LeftLocation);
-            jit_reg Right = Backend_EmitMoveToReg(Backend, Stack, RightLocation);
-            jit_location Result = LocationFromReg(Left);
-
-            Backend_EmitCmpReg(Backend, Left, Right, Backend_GetCmpType(Op));
-
-            Backend_DeallocateReg(Backend, Right);
-            Ir_Stack_Push(Stack, &Result);
-        } break;
-        case IR_OP_NEG:
-        {
-            /* stack.top = 0 - stack.top */
-            jit_location *Value = Ir_Stack_Pop(Stack);
-            jit_reg ResultReg = Backend_AllocateReg(Backend, Stack);
-            Backend_EmitLoadZero(Backend, ResultReg);
-            OP(Sub, ResultReg, Value);
-            {
-                jit_location Result = LocationFromReg(ResultReg);
-                Ir_Stack_Push(Stack, &Result);
-            }
-
-            if (Value->Type == LOCATION_REG)
-            {
-                Backend_DeallocateReg(Backend, Value->As.Reg);
-            }
-        } break;
-        }
-#undef OP
-    }
-    return NextBlock;
-}
-#else
-
 #define DEFINE_OP(name) \
 void Backend_Op_ ## name (jit_backend *Backend) {\
     jit_location *Right = Backend_EvalStack_Pop(Backend); \
@@ -991,7 +857,7 @@ i32 Backend_Op_FnReturn(jit_backend *Backend, i32 EntryLocation, bool8 HasReturn
 }
 void Backend_Op_ArgStart(jit_backend *Backend)
 {
-    Backend_SpillReg(Backend, SPILL_ALL);
+    Backend_SpillReg(Backend, Backend->BusyRegCount);
 }
 i32 Backend_Op_Call(jit_backend *Backend, int ArgCount) /* returns location for patching */
 {
@@ -1034,7 +900,7 @@ void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex) /* returns loc
     jit_location Global = {
         .Type = LOCATION_MEM,
         .As.Mem = {
-            .BaseReg = Backend_GetGlobalPtrReg(),
+            .BaseReg = Backend_GlobalPtrReg(),
             .Offset = GlobalIndex,
         },
     };
@@ -1046,13 +912,12 @@ void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex)
     jit_location *ValueToStore = Backend_EvalStack_Pop(Backend);
     jit_reg Tmp = Backend_EmitMoveToReg(Backend, ValueToStore);
     jit_mem Dst = {
-        .BaseReg = Backend_GetGlobalPtrReg(), 
+        .BaseReg = Backend_GlobalPtrReg(), 
         .Offset = GlobalIndex,
     };
     Backend_EmitStore(Backend, Tmp, Dst);
     Backend_DeallocateReg(Backend, Tmp);
 }
-#endif
 
 i32 Backend_GetProgramSize(const jit_backend *Backend)
 {

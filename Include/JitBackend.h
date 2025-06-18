@@ -36,18 +36,7 @@ i32 Backend_GetProgramSize(const jit_backend *Backend);
 const u8 *Backend_GetProgramPtr(const jit_backend *Backend);
 void *Backend_GetDataPtr(jit_backend *Backend);
 
-#if 0
-const u8 *Backend_TranslateBlock(
-    jit_backend *Backend, 
-    const u8 *IrBlock, /* a block starts with IR_OP_*_BEGIN, and ends with IR_OP_*_END */
-    jit_ir_stack *Stack,
-    jit_fnref_stack *FnRef,
-    jit *Jit
-);
-uint Backend_EmitFunctionEntry(jit_backend *Backend);
-void Backend_EmitFunctionExit(jit_backend *Backend, uint EntryLocation);
-void Backend_PatchCall(jit_backend *Backend, uint CallLocation, uint FunctionLocation);
-#else
+
 void Backend_Op_Swap(jit_backend *Backend);
 void Backend_Op_Add(jit_backend *Backend);
 void Backend_Op_Sub(jit_backend *Backend);
@@ -68,7 +57,6 @@ void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLoca
 void Backend_Op_LoadLocal(jit_backend *Backend, i32 LocalIndex);
 void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex); /* returns location for patching */
 void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex);
-#endif
 
 /* to stdout */
 void Backend_Disassemble(const jit_backend *Backend, const def_table *Global);

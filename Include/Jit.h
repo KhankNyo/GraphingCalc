@@ -34,26 +34,10 @@ typedef struct jit
     def_table Global;
     jit_token Curr, Next;
 
-#if 0
-    i32 FnBlockHead;
-    i32 VarBlockHead;
-    i32 PrevFnBlock;
-    i32 PrevVarBlock;
-    int IrOpByteCount;
-    u8 *IrOp;
-    jit_ir_data_manager IrData;
-    
-
-    jit_backend Backend;
-    jit_error Error;
-
-    jit_scratchpad S;
-#else
     jit_backend Backend;
     jit_error Error;
     jit_scratchpad FrontendData, BackendData;
     i32 LocalVarBase, LocalVarEnd;
-#endif
 } jit;
 
 /* returns 0 on success, otherwise returns minimum scratch pad memory size */
