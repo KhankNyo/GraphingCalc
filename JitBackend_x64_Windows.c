@@ -115,7 +115,7 @@ static int ModFromDisplacement(i32 Displacement)
 }
 
 /* does not support rip-relative offset and index-scale mode */
-static void Backend_EmitGenericModRm(jit_backend *Backend, int Reg, int Rm, i32 Displacement)
+static i32 Backend_EmitGenericModRm(jit_backend *Backend, int Reg, int Rm, i32 Displacement)
 {
     int Mod = ModFromDisplacement(Displacement);
     if (RBP == Rm && 0 == Displacement)
@@ -127,6 +127,8 @@ static void Backend_EmitGenericModRm(jit_backend *Backend, int Reg, int Rm, i32 
     {
         EmitCode(Backend, 1, SIB(0, RSP, RSP));
     }
+
+    i32 DisplacementLocation = Backend->ProgramSize;
     switch (Mod)
     {
     case 0:
@@ -135,6 +137,7 @@ static void Backend_EmitGenericModRm(jit_backend *Backend, int Reg, int Rm, i32 
     case 1: EmitCode(Backend, 1, Displacement); break;
     case 2: EmitCodeSequence(Backend, (u8 *)&Displacement, sizeof Displacement); break;
     }
+    return DisplacementLocation;
 }
 
 static int Backend_EmitFloatOpcode(jit_backend *Backend, u8 Opcode, int DstReg, int SrcBase, i32 SrcOffset)
@@ -150,14 +153,18 @@ static void Backend_EmitFloatOpcodeReg(jit_backend *Backend, u8 Opcode, int DstR
     EmitCode(Backend, 4, Backend->FloatOpcode, 0x0F, Opcode, ModRm);
 }
 
-static void Backend_EvalStack_Push(jit_backend *Backend, jit_location *Location)
+static void Backend_EvalStack_Push(jit_backend *Backend, jit_location Location)
 {
-    jit_location *Slot = Jit_Scratchpad_PushLeft(Backend->EvalStack, sizeof(*Location));
-    *Slot = *Location;
+    jit_location *Slot = Jit_Scratchpad_PushLeft(Backend->EvalStack, sizeof(*Slot));
+    *Slot = Location;
 }
 static jit_location *Backend_EvalStack_Pop(jit_backend *Backend)
 {
     return Jit_Scratchpad_PopLeft(Backend->EvalStack, sizeof(jit_location));
+}
+static void Backend_EvalStack_PopMultiple(jit_backend *Backend, int Count)
+{
+    Jit_Scratchpad_PopLeft(Backend->EvalStack, Count * sizeof(jit_location));
 }
 static jit_location *Backend_EvalStack_Top(jit_backend *Backend, int IndexFromTop)
 {
@@ -259,14 +266,14 @@ static void Backend_EmitStore(jit_backend *Backend, jit_reg SrcReg, jit_mem Mem)
     Backend_EmitGenericModRm(Backend, SrcReg, Mem.BaseReg, Mem.Offset);
 }
 
-static void Backend_EmitLoad(jit_backend *Backend, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
+static i32 Backend_EmitLoad(jit_backend *Backend, jit_reg DstReg, jit_reg SrcBase, i32 SrcOffset)
 {
     /* emit it as a store instruction initially */
     uint PrevSize = EmitCodeSequence(Backend, 
         Backend->StoreSingle, 
         sizeof Backend->StoreSingle
     );
-    Backend_EmitGenericModRm(Backend, DstReg, SrcBase, SrcOffset);
+    i32 DisplacementLocation = Backend_EmitGenericModRm(Backend, DstReg, SrcBase, SrcOffset);
     uint InstructionLength = Backend->ProgramSize - PrevSize;
 
     /* compared the emitted instruction with the last*/
@@ -286,6 +293,7 @@ static void Backend_EmitLoad(jit_backend *Backend, jit_reg DstReg, jit_reg SrcBa
         for (uint i = 0; i < sizeof Backend->LoadSingle; i++)
             CurrIns[i] = Backend->LoadSingle[i];
     }
+    return DisplacementLocation;
 }
 
 
@@ -333,19 +341,6 @@ static void Backend_EmitLoadZero(jit_backend *Backend, jit_reg DstReg)
 {
     /* xorps dst, dst */
     EmitCode(Backend, 3, 0x0F, 0x57, MODRM(3, DstReg, DstReg));
-}
-
-static sse_cmp_type Backend_GetCmpType(jit_ir_op_type Type)
-{
-    switch (Type)
-    {
-    case IR_OP_LESS: return CMP_LT;
-    case IR_OP_GREATER: return CMP_NLE;
-    case IR_OP_LESS_EQUAL: return CMP_LE;
-    case IR_OP_GREATER_EQUAL: return CMP_NLT;
-    default: UNREACHABLE();
-    }
-    return 0;
 }
 
 static void Backend_EmitCmpReg(jit_backend *Backend, jit_reg Dst, jit_reg B, sse_cmp_type CmpType)
@@ -418,14 +413,6 @@ static uint Backend_EmitCall(jit_backend *Backend, uint FunctionLocation)
     uint Location = EmitCode(Backend, 1, 0xE8);
     EmitCodeSequence(Backend, (u8 *)&Rel32, sizeof Rel32);
     return Location;
-}
-
-void Backend_PatchCall(jit_backend *Backend, uint CallLocation, uint FunctionLocation)
-{
-    ASSERT(FunctionLocation < Backend->ProgramSize, "bad dst location");
-    ASSERT(CallLocation + 5 <  Backend->ProgramSize, "bad src location");
-    i32 Offset = FunctionLocation - (CallLocation + 5);
-    MemCpy(Backend->Program + CallLocation + 1, &Offset, 4);
 }
 
 
@@ -601,7 +588,7 @@ static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
     int IrStackCount = Backend_EvalStack_Count(Backend);
     ASSERT(ArgCount <= IrStackCount, "arg count");
 
-    /* reserve stack space for arguments */
+    /* reserve physical stack space for arguments */
     int StackSpace = MAX(4, ArgCount); /* 4 args for shadow space */
     Backend_PushStack(Backend, StackSpace);
 
@@ -632,8 +619,11 @@ static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
         Backend_DeallocateReg(Backend, Reg);
     }
 
-    /* pop argument stack */
+    /* pop arguments on the physical stack */
     Backend_PopStack(Backend, ArgCount);
+
+    /* pop arguments on the eval stack */
+    Backend_EvalStack_PopMultiple(Backend, ArgCount);
 }
 
 
@@ -913,7 +903,7 @@ void Backend_Op_ ## name (jit_backend *Backend) {\
     case LOCATION_MEM: Backend_Emit ## name (Backend, LeftReg, Right->As.Mem.BaseReg, Right->As.Mem.Offset); break; \
     } \
     jit_location Result = LocationFromReg(LeftReg); \
-    Backend_EvalStack_Push(Backend, &Result); \
+    Backend_EvalStack_Push(Backend, Result); \
     if (LOCATION_REG == Right->Type) { \
         Backend_DeallocateReg(Backend, Right->As.Reg); \
     } \
@@ -924,19 +914,150 @@ DEFINE_OP(Sub);
 DEFINE_OP(Mul);
 DEFINE_OP(Div);
 
-void Backend_Op_Less(jit_backend *Backend);
-void Backend_Op_LessOrEqual(jit_backend *Backend);
-void Backend_Op_Greater(jit_backend *Backend);
-void Backend_Op_GreaterOrEqual(jit_backend *Backend);
-void Backend_Op_Neg(jit_backend *Backend);
+void Backend_Op_Swap(jit_backend *Backend)
+{
+    jit_location *Right = Backend_EvalStack_Top(Backend, 0);
+    jit_location *Left = Backend_EvalStack_Top(Backend, 1);
+    SWAP(jit_location, *Left, *Right);
+}
 
-void Backend_Op_ArgStart(jit_backend *Backend);
-i32 Backend_Op_Call(jit_backend *Backend, int ArgCount); /* returns location for patching */
-void Backend_Patch_Call(jit_backend *Backend, i32 Location);
+void Backend_Op_Cmp(jit_backend *Backend, sse_cmp_type CmpType)
+{
+    jit_location *Right = Backend_EvalStack_Pop(Backend);
+    jit_location *Left = Backend_EvalStack_Pop(Backend);
+    jit_reg LeftReg = Backend_EmitMoveToReg(Backend, Left);
+    jit_reg RightReg = Backend_EmitMoveToReg(Backend, Right);
 
-void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex);
-i32 Backend_Op_LoadGlobal(jit_backend *Backend, int GlobalIndex); /* returns location for patching */
-void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 Location);
+    Backend_EmitCmpReg(Backend, LeftReg, RightReg, CmpType);
+    Backend_DeallocateReg(Backend, RightReg);
+    Backend_EvalStack_Push(Backend, LocationFromReg(LeftReg));
+}
+
+void Backend_Op_Less(jit_backend *Backend)
+{
+    Backend_Op_Cmp(Backend, CMP_LT);
+}
+void Backend_Op_LessOrEqual(jit_backend *Backend)
+{
+    Backend_Op_Cmp(Backend, CMP_LE);
+}
+void Backend_Op_Greater(jit_backend *Backend)
+{
+    Backend_Op_Cmp(Backend, CMP_NLE);
+}
+void Backend_Op_GreaterOrEqual(jit_backend *Backend)
+{
+    Backend_Op_Cmp(Backend, CMP_NLT);
+}
+
+void Backend_Op_Neg(jit_backend *Backend)
+{
+    jit_location Value = *Backend_EvalStack_Pop(Backend);
+    jit_reg ZeroReg = Backend_AllocateReg(Backend);
+    Backend_EmitLoadZero(Backend, ZeroReg);
+
+    Backend_EvalStack_Push(Backend, Value);
+    Backend_EvalStack_Push(Backend, LocationFromReg(ZeroReg));
+    Backend_Op_Sub(Backend);
+}
+
+
+i32 Backend_Op_FnEntry(jit_backend *Backend, int ParamCount)
+{
+    i32 Location = Backend_EmitFunctionEntry(Backend);
+    /* move arguments to stack */
+    for (int i = 0; i < ParamCount && Backend_IsArgumentInReg(i); i++)
+    {
+        jit_reg ArgReg = Backend_CallerSideArgReg(i);
+        jit_mem Param = Backend_CalleeSideParamMem(i);
+        Backend_EmitStore(Backend, ArgReg, Param);
+    }
+    return Location;
+}
+i32 Backend_Op_FnReturn(jit_backend *Backend, i32 EntryLocation, bool8 HasReturnValue)
+{
+    if (HasReturnValue)
+    {
+        jit_location *ReturnValue = Backend_EvalStack_Pop(Backend);
+        Backend_EmitCopyToReg(Backend, XMM(0), ReturnValue);
+        if (LOCATION_REG == ReturnValue->Type) /* return value had a diff register to the actual return register */
+        {
+            Backend_DeallocateReg(Backend, ReturnValue->As.Reg);
+        }
+    }
+    Backend_EmitFunctionExit(Backend, EntryLocation);
+    return Backend->ProgramSize;
+}
+void Backend_Op_ArgStart(jit_backend *Backend)
+{
+    Backend_SpillReg(Backend, SPILL_ALL);
+}
+i32 Backend_Op_Call(jit_backend *Backend, int ArgCount) /* returns location for patching */
+{
+    /* emit args */
+    Backend_EmitCallArgs(Backend, ArgCount);
+    
+    /* emit call instruction */
+    uint CallLocation = Backend_EmitCall(Backend, 0); /* don't know the location yet */
+
+    /* push return value onto the eval stack */
+    Backend_ForceAllocateReg(Backend, XMM(0));
+    jit_location Result = LocationFromReg(XMM(0));
+    Backend_EvalStack_Push(Backend, Result);
+
+    /* return call site for instruction patching */
+    return CallLocation;
+}
+
+void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLocation)
+{
+    ASSERT(FunctionLocation < (i32)Backend->ProgramSize, "bad dst location");
+    ASSERT(CallLocation + 5 < (i32)Backend->ProgramSize, "bad src location");
+    i32 Offset = FunctionLocation - (CallLocation + 5);
+    MemCpy(Backend->Program + CallLocation + 1, &Offset, 4);
+}
+
+
+void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex)
+{
+    jit_location Local = {
+        .Type = LOCATION_MEM,
+        .As.Mem = Backend_CalleeSideParamMem(LocalIndex),
+    };
+    Backend_EvalStack_Push(Backend, Local);
+}
+
+i32 Backend_Op_LoadGlobal(jit_backend *Backend, int GlobalIndex) /* returns location for patching */ 
+{
+    jit_location Global = {
+        .Type = LOCATION_MEM,
+        .As.Mem = {
+            .BaseReg = Backend_GetGlobalPtrReg(),
+            .Offset = GlobalIndex * Backend->DataSize,
+        },
+    };
+    jit_reg ResultReg = Backend_AllocateReg(Backend);
+    i32 DisplacementLocation = Backend_EmitLoad(Backend, ResultReg, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
+    Backend_EvalStack_Push(Backend, LocationFromReg(ResultReg));
+    return DisplacementLocation;
+}
+
+void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 LoadLocation, i32 GlobalLocation)
+{
+    MemCpy(Backend->Program + LoadLocation, &GlobalLocation, sizeof(GlobalLocation));
+}
+
+void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex)
+{
+    jit_location *ValueToStore = Backend_EvalStack_Pop(Backend);
+    jit_reg Tmp = Backend_EmitMoveToReg(Backend, ValueToStore);
+    jit_mem Dst = {
+        .BaseReg = Backend_GetGlobalPtrReg(), 
+        .Offset = GlobalIndex,
+    };
+    Backend_EmitStore(Backend, Tmp, Dst);
+    Backend_DeallocateReg(Backend, Tmp);
+}
 #endif
 
 i32 Backend_GetProgramSize(const jit_backend *Backend)

@@ -34,11 +34,11 @@ typedef struct jit
     def_table Global;
     jit_token Curr, Next;
 
+#if 0
     i32 FnBlockHead;
     i32 VarBlockHead;
     i32 PrevFnBlock;
     i32 PrevVarBlock;
-#if 0
     int IrOpByteCount;
     u8 *IrOp;
     jit_ir_data_manager IrData;
@@ -51,7 +51,7 @@ typedef struct jit
 #else
     jit_backend Backend;
     jit_error Error;
-    jit_scratchpad IrProgram, IrData;
+    jit_scratchpad FrontendData, BackendData;
     i32 LocalVarBase, LocalVarEnd;
 #endif
 } jit;

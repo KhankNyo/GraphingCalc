@@ -48,6 +48,7 @@ uint Backend_EmitFunctionEntry(jit_backend *Backend);
 void Backend_EmitFunctionExit(jit_backend *Backend, uint EntryLocation);
 void Backend_PatchCall(jit_backend *Backend, uint CallLocation, uint FunctionLocation);
 #else
+void Backend_Op_Swap(jit_backend *Backend);
 void Backend_Op_Add(jit_backend *Backend);
 void Backend_Op_Sub(jit_backend *Backend);
 void Backend_Op_Mul(jit_backend *Backend);
@@ -58,13 +59,16 @@ void Backend_Op_Greater(jit_backend *Backend);
 void Backend_Op_GreaterOrEqual(jit_backend *Backend);
 void Backend_Op_Neg(jit_backend *Backend);
 
+i32 Backend_Op_FnEntry(jit_backend *Backend, int ParamCount);
+i32 Backend_Op_FnReturn(jit_backend *Backend, i32 EntryLocation, bool8 HasReturnValue);
 void Backend_Op_ArgStart(jit_backend *Backend);
 i32 Backend_Op_Call(jit_backend *Backend, int ArgCount); /* returns location for patching */
-void Backend_Patch_Call(jit_backend *Backend, i32 Location);
+void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLocation);
 
 void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex);
-i32 Backend_Op_LoadGlobal(jit_backend *Backend, int GlobalIndex); /* returns location for patching */
-void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 Location);
+i32 Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex); /* returns location for patching */
+void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 LoadLocation, i32 GlobalLocation);
+void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex);
 #endif
 
 /* to stdout */

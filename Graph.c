@@ -459,8 +459,8 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-#if 1
-        "f(x) = (x > 0)*(x<1)\n"
+#if 0
+        "f(x) = x*x\n"
 #elif 0
         "f(x) = g(g(x))*h(x*1) + k(1, 2, 3, x, 4, 5, 6) + j(1, 0)\n"
         "h(x) = x*x\n"
@@ -470,9 +470,9 @@ graph_state Graph_OnEntry(void)
         "e(x) = variable*x\n"
         "variable = g(10)\n"
 #else
-        "f(x) = g(x)\n"
-        "g(x) = x*2\n"
-        "m = 1/4"
+        "m = 1/4\n"
+        "f(x) = x + m\n"
+        "g(x) = x*m\n"
 #endif
         ;
     sResult = Jit_Compile(&State.Jit, JIT_COMPFLAG_FLOAT32, Expr);
