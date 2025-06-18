@@ -485,6 +485,7 @@ static i32 Backend_PushGlobal(jit_backend *Backend)
 i32 Backend_AllocateGlobal(jit_backend *Backend, double InitialValue)
 {
     i32 Offset = Backend_PushGlobal(Backend);
+    printf("%d, %f\n", Offset, InitialValue);
     u8 *Global = Backend->GlobalData;
     if (Backend->DataSize == sizeof(double))
     {
@@ -1018,6 +1019,7 @@ void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLoca
 }
 
 
+
 void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex)
 {
     jit_location Local = {
@@ -1027,24 +1029,16 @@ void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex)
     Backend_EvalStack_Push(Backend, Local);
 }
 
-i32 Backend_Op_LoadGlobal(jit_backend *Backend, int GlobalIndex) /* returns location for patching */ 
+void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex) /* returns location for patching */ 
 {
     jit_location Global = {
         .Type = LOCATION_MEM,
         .As.Mem = {
             .BaseReg = Backend_GetGlobalPtrReg(),
-            .Offset = GlobalIndex * Backend->DataSize,
+            .Offset = GlobalIndex,
         },
     };
-    jit_reg ResultReg = Backend_AllocateReg(Backend);
-    i32 DisplacementLocation = Backend_EmitLoad(Backend, ResultReg, Global.As.Mem.BaseReg, Global.As.Mem.Offset);
-    Backend_EvalStack_Push(Backend, LocationFromReg(ResultReg));
-    return DisplacementLocation;
-}
-
-void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 LoadLocation, i32 GlobalLocation)
-{
-    MemCpy(Backend->Program + LoadLocation, &GlobalLocation, sizeof(GlobalLocation));
+    Backend_EvalStack_Push(Backend, Global);
 }
 
 void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex)
@@ -1425,6 +1419,7 @@ void Backend_Disassemble(const jit_backend *Backend, const def_table *Global)
     const def_table_entry *Entry = Global->Head;
     const u8 *Program = Backend->Program;
     int BytesPerLine = 10;
+    printf("=============== Instructions ===============\n");
     while (Entry)
     {
         switch (Entry->Type)
@@ -1470,6 +1465,25 @@ void Backend_Disassemble(const jit_backend *Backend, const def_table *Global)
         Entry = Entry->Next;
     }
 
+    printf("=============== Globals ===============\n");
+    i32 Count = Backend->GlobalDataSize / Backend->DataSize;
+    if (sizeof(double) == Backend->DataSize)
+    {
+        double *Ptr = Backend->GlobalData;
+        for (i32 i = 0; i < Count; i++)
+        {
+            printf("[rcx + 0x%x] = %f\n", i * Backend->DataSize, Ptr[i]);
+        }
+    }
+    else
+    {
+        float *Ptr = Backend->GlobalData;
+        for (i32 i = 0; i < Count; i++)
+        {
+            printf("[rcx + 0x%x] = %f\n", i * Backend->DataSize, Ptr[i]);
+        }
+    }
+    
 }
 
 #undef PEEK

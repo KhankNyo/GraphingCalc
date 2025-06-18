@@ -21,7 +21,7 @@ typedef enum precedence
 } precedence;
 
 typedef struct jit_eval_data jit_eval_data;
-static void Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference);
+static void Jit_ParseExpr(jit *Jit, precedence Prec);
 
 
 static void Jit_Scratchpad_Reset(jit_scratchpad *S, void *Buffer, int BufferCapacity)
@@ -447,14 +447,8 @@ static bool8 Jit_FindVariable(
 /*========================================================== 
  *                    REFERENCE RECORD
  *==========================================================*/
-typedef enum reference_type 
-{
-    REF_FUNCTION,
-    REF_VARIABLE,
-} reference_type;
 typedef struct reference 
 {
-    reference_type Type;
     const char *Str;
     i32 Len;
     i32 Line, Offset;
@@ -462,28 +456,10 @@ typedef struct reference
     i32 ArgCount;
 } reference;
 
-void RefStack_PushVariableReference(
-    jit *Jit, 
-    const char *Name, i32 Len, 
-    i32 Line, i32 Offset, 
-    i32 RefLocation)
-{
-    reference *Ptr = Jit_Scratchpad_PushRight(&Jit->FrontendData, sizeof(reference));
-    *Ptr = (reference) {
-        .Type = REF_VARIABLE,
-        .Str = Name,
-        .Len = Len,
-        .Line = Line,
-        .Offset = Offset,
-        .RefLocation = RefLocation,
-    };
-}
-
 void RefStack_PushFunctionReference(jit *Jit, const jit_token *Function, i32 ArgCount, i32 RefLocation)
 {
     reference *Ptr = Jit_Scratchpad_PushRight(&Jit->FrontendData, sizeof(reference));
     *Ptr = (reference) {
-        .Type = REF_FUNCTION,
         .Str = Function->Str.Ptr,
         .Len = Function->Str.Len,
         .Line = Function->Line,
@@ -572,6 +548,8 @@ static void Bytecode_LinkBlock(jit *Jit)
 typedef enum jit_eval_data_type 
 {
     EVAL_CONSTANT,
+    EVAL_LOCAL,
+    EVAL_GLOBAL,
     EVAL_DYNAMIC,
 } jit_eval_data_type;
 struct jit_eval_data 
@@ -579,6 +557,8 @@ struct jit_eval_data
     jit_eval_data_type Type;
     union {
         double Const;
+        i32 LocalIndex;
+        i32 GlobalIndex;
     } As;
 };
 static jit_eval_data EvalData_Const(double Const)
@@ -592,6 +572,20 @@ static jit_eval_data EvalData_Dynamic(void)
 {
     return (jit_eval_data) {
         .Type = EVAL_DYNAMIC,
+    };
+}
+static jit_eval_data EvalData_Local(i32 Index)
+{
+    return (jit_eval_data) {
+        .Type = EVAL_LOCAL,
+        .As.LocalIndex = Index,
+    };
+}
+static jit_eval_data EvalData_Global(i32 Index)
+{
+    return (jit_eval_data) {
+        .Type = EVAL_GLOBAL,
+        .As.GlobalIndex = Index,
     };
 }
 
@@ -615,21 +609,30 @@ static jit_eval_data *EvalStack_Top(jit *Jit)
     return Location - 1;
 }
 
-static void EvalStack_LoadToRuntimeStack(jit *Jit, jit_eval_data *Data)
+/* returns true if data was dynamic */
+static bool8 EvalStack_TransferDataToBackend(jit *Jit, jit_eval_data *Data)
 {
     switch (Data->Type)
     {
-    case EVAL_DYNAMIC:
-    /* nothing to do, loading the arg has been handled */
+    case EVAL_GLOBAL: /* load the global var */
     {
+        Backend_Op_LoadGlobal(&Jit->Backend, Data->As.GlobalIndex);
     } break;
-    case EVAL_CONSTANT:
-    /* must load constant to the runtime stack */
+    case EVAL_LOCAL: /* load the local var */
+    {
+        Backend_Op_LoadLocal(&Jit->Backend, Data->As.LocalIndex);
+    } break;
+    case EVAL_CONSTANT: /* load the constant */
     {
         i32 GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, Data->As.Const);
         Backend_Op_LoadGlobal(&Jit->Backend, GlobalIndex);
     } break;
+    case EVAL_DYNAMIC: /* nothing to load, already on backend's eval stack */
+    {
+        return true;
+    } break;
     }
+    return false;
 }
 
 
@@ -941,7 +944,7 @@ static bool8 ConsumeOrError(jit *Jit, jit_token_type ExpectedType, const char *E
 
 
 
-static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
+static void Jit_ParseUnary(jit *Jit)
 {
     jit_token Token = ConsumeToken(Jit);
     switch (Token.Type)
@@ -963,9 +966,8 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
             {
                 /* compile the arguments and load them on the ir stack */
                 do {
-                    Jit_ParseExpr(Jit, PREC_EXPR, AllowForwardReference);
-                    jit_eval_data *Arg = EvalStack_Pop(Jit);
-                    EvalStack_LoadToRuntimeStack(Jit, Arg);
+                    Jit_ParseExpr(Jit, PREC_EXPR);
+                    EvalStack_TransferDataToBackend(Jit, EvalStack_Pop(Jit));
                     ArgCount++;
                 } while (ConsumeIfNextTokenIs(Jit, TOK_COMMA));
             }
@@ -973,6 +975,8 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
 
             /* emit instruction to call fn */
             i32 CallLocation = Backend_Op_Call(&Jit->Backend, ArgCount);
+            /* push function result on eval stack */
+            EvalStack_Push(Jit, EvalData_Dynamic());
 
             /* save call location to reference record */
             RefStack_PushFunctionReference(
@@ -981,23 +985,10 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
                 ArgCount, 
                 CallLocation
             );
-
-            /* push function result on eval stack */
-            EvalStack_Push(Jit, EvalData_Dynamic());
         }
         /* variable reference */
-        /* push(expr dyn) */
         else
         {
-#if 0
-            if (!AllowForwardReference
-            && !Jit_FindVariable(Jit, Token.Str.Ptr, Token.Str.Len, 0, 0, NULL))
-            {
-                Error_AtToken(&Jit->Error, &Token, "Variable was not defined before use.");
-                break;
-            }
-#endif
-            /* emit instruction to load variable */
             /* search in local scope */
             if (Jit_InLocalScope(Jit))
             {
@@ -1007,11 +998,9 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
                     if (Local->Len == Token.Str.Len 
                     && StrEqu(Local->Ptr, Token.Str.Ptr, Token.Str.Len))
                     {
-                        /* found the local variable being referenced, 
-                         * emit instruction to load it */
-                        Backend_Op_LoadLocal(&Jit->Backend, i - Jit->LocalVarBase);
-                        /* load it onto the eval stack */
-                        EvalStack_Push(Jit, EvalData_Dynamic());
+                        EvalStack_Push(Jit, 
+                            EvalData_Local(i - Jit->LocalVarBase)
+                        );
                         return;
                     }
                 }
@@ -1019,33 +1008,42 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
             }
             /* not in local scope, switch to global */
 
-            /* global variable references will be resolved in the reference resolution stage */
-            /* emit instruction to load the variable */
-            i32 RefLocation = Backend_Op_LoadGlobal(&Jit->Backend, INT32_MAX/4);
-
-            /* push variable info onto the reference record */
-            RefStack_PushVariableReference(Jit, 
-                Token.Str.Ptr, 
-                Token.Str.Len, 
-                Token.Line, 
-                Token.Offset, 
-                RefLocation
+            def_table_entry *Entry = DefTable_Find(&Jit->Global, 
+                Token.Str.Ptr, Token.Str.Len, TYPE_VARIABLE
             );
-
-            /* push dynamic variable onto the eval stack */
-            EvalStack_Push(Jit, EvalData_Dynamic());
+            if (!Entry)
+            {
+                Error_AtToken(&Jit->Error, &Token, "Variable must be defined before use.");
+                EvalStack_Push(Jit, EvalData_Global(0)); /* dummy */
+            }
+            else
+            {
+                EvalStack_Push(Jit, 
+                    EvalData_Global(Entry->As.Variable.GlobalIndex)
+                );
+            }
         }
     } break;
     case TOK_PLUS:  /* positive sign (nop) */
     {
-        Jit_ParseUnary(Jit, AllowForwardReference);
+        Jit_ParseUnary(Jit);
     } break;
     case TOK_MINUS: /* negate */
     {
-        Jit_ParseUnary(Jit, AllowForwardReference);
+        Jit_ParseUnary(Jit);
         jit_eval_data *Top = EvalStack_Top(Jit);
         switch (Top->Type)
         {
+        case EVAL_LOCAL:
+        {
+            Backend_Op_LoadLocal(&Jit->Backend, Top->As.LocalIndex);
+            Backend_Op_Neg(&Jit->Backend);
+        } break;
+        case EVAL_GLOBAL:
+        {
+            Backend_Op_LoadGlobal(&Jit->Backend, Top->As.GlobalIndex);
+            Backend_Op_Neg(&Jit->Backend);
+        } break;
         case EVAL_DYNAMIC:
         {
             Backend_Op_Neg(&Jit->Backend);
@@ -1058,13 +1056,13 @@ static void Jit_ParseUnary(jit *Jit, bool8 AllowForwardReference)
     } break; 
     case TOK_LPAREN: /* push('(expr)') */
     {
-        Jit_ParseExpr(Jit, PREC_EXPR, AllowForwardReference);
+        Jit_ParseExpr(Jit, PREC_EXPR);
         ConsumeOrError(Jit, TOK_RPAREN, "Expected ')' after expression.");
     } break;
     default:
     {
         Error_AtToken(&Jit->Error, &Token, "Expected an expression.");
-        EvalStack_Push(Jit, EvalData_Dynamic()); /* pushes dummy */
+        EvalStack_Push(Jit, EvalData_Global(0)); /* dummy */
     } break;
     }
 }
@@ -1092,13 +1090,13 @@ static precedence PrecedenceOf(jit_token_type Operator)
 
 
 /* returns the stack's top */
-static void Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference)
+static void Jit_ParseExpr(jit *Jit, precedence Prec)
 {
-    Jit_ParseUnary(Jit, AllowForwardReference);
+    Jit_ParseUnary(Jit);
     while (PrecedenceOf(NextToken(Jit).Type) >= Prec)
     {
         jit_token_type Oper = ConsumeToken(Jit).Type;
-        Jit_ParseExpr(Jit, PrecedenceOf(Oper) + 1, AllowForwardReference);
+        Jit_ParseExpr(Jit, PrecedenceOf(Oper) + 1);
 
         jit_eval_data *Right = EvalStack_Pop(Jit);
         jit_eval_data *Left = EvalStack_Pop(Jit);
@@ -1127,6 +1125,7 @@ static void Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference
         }
         else /* runtime expr */
         {
+#if 0
             if (EVAL_CONSTANT == Left->Type)
             {
                 /* right operand was pushed onto backend's eval stack first, swap it */
@@ -1140,6 +1139,15 @@ static void Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference
                 i32 GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, Right->As.Const);
                 Backend_Op_LoadGlobal(&Jit->Backend, GlobalIndex);
             }
+#else
+            EvalStack_TransferDataToBackend(Jit, Left);
+            EvalStack_TransferDataToBackend(Jit, Right);
+            if (Left->Type != EVAL_DYNAMIC 
+            && Right->Type == EVAL_DYNAMIC) /* right data was on stack before left data */
+            {
+                Backend_Op_Swap(&Jit->Backend);
+            }
+#endif
 
             switch (Oper)
             {
@@ -1156,6 +1164,7 @@ static void Jit_ParseExpr(jit *Jit, precedence Prec, bool8 AllowForwardReference
                 UNREACHABLE();
             } break;
             }
+
             ResultData = EvalData_Dynamic();
         }
 
@@ -1259,9 +1268,8 @@ static void Jit_Function_Decl(jit *Jit, const jit_token *FnName)
     Function->Location = Backend_Op_FnEntry(&Jit->Backend, Function->ParamCount);
     {
         /* function body */
-        Jit_ParseExpr(Jit, PREC_EXPR, true);
-        jit_eval_data *Result = EvalStack_Pop(Jit); /* pop result since we don't need it anymore */
-        EvalStack_LoadToRuntimeStack(Jit, Result);
+        Jit_ParseExpr(Jit, PREC_EXPR);
+        EvalStack_TransferDataToBackend(Jit, EvalStack_Pop(Jit));
     }
     i32 FnEnd = Backend_Op_FnReturn(&Jit->Backend, Function->Location, true);
     Function->InsByteCount = FnEnd - Function->Location;
@@ -1278,25 +1286,28 @@ static void Jit_Variable_Decl(jit *Jit, const jit_token *VarName)
     /* equal sign */
     ConsumeOrError(Jit, TOK_EQUAL, "Expected '=' after variable name.");
     
-    /* compile the block */
+    /* compile the expression */
+    Jit_ParseExpr(Jit, PREC_EXPR);
+    jit_eval_data *Result = EvalStack_Pop(Jit);
+    switch (Result->Type)
     {
-        /* expression */
-        Jit_ParseExpr(Jit, PREC_EXPR, true);
-        jit_eval_data *Result = EvalStack_Pop(Jit);
-        switch (Result->Type)
-        {
-        case EVAL_DYNAMIC:
-        /* dynamic expression, pop runtime stack and load to global */
-        {
-            Variable->GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, 0.0);
-            Backend_Op_StoreGlobal(&Jit->Backend, Variable->GlobalIndex);
-        } break;
-        case EVAL_CONSTANT:
-        /* constant expression, no instructions needed */
-        {
-            Variable->GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, Result->As.Const);
-        } break;
-        }
+    case EVAL_LOCAL: /* impossible to store a local variable to a global variable */
+    {
+        UNREACHABLE();
+    } break;
+    case EVAL_DYNAMIC: /* dynamic expression, pop runtime stack and load to global */
+    {
+        Variable->GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, 0.0);
+        Backend_Op_StoreGlobal(&Jit->Backend, Variable->GlobalIndex);
+    } break;
+    case EVAL_CONSTANT: /* constant expression, no instructions needed */
+    {
+        Variable->GlobalIndex = Backend_AllocateGlobal(&Jit->Backend, Result->As.Const);
+    } break;
+    case EVAL_GLOBAL: /* aliasing a global variable */
+    {
+        Variable->GlobalIndex = Result->As.GlobalIndex;
+    } break;
     }
 }
 
@@ -1563,14 +1574,6 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Src)
 
 
     /* ref-patching stage */
-    const def_table_entry_type Types[] = {
-        [REF_FUNCTION] = TYPE_FUNCTION,
-        [REF_VARIABLE] = TYPE_VARIABLE,
-    };
-    const char *StrTypes[] = {
-        [REF_FUNCTION] = "function",
-        [REF_VARIABLE] = "variable",
-    };
     while (!RefStack_IsEmpty(Jit))
     {
         reference *Ref = RefStack_Pop(Jit);
@@ -1578,7 +1581,7 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Src)
             &Jit->Global, 
             Ref->Str, 
             Ref->Len, 
-            Types[Ref->Type]
+            TYPE_FUNCTION
         );
         if (NULL == Entry)
         {
@@ -1588,23 +1591,25 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Src)
                 Ref->Len, 
                 Ref->Line, 
                 Ref->Offset, 
-                "Undefined reference to %s.",
-                StrTypes[Ref->Type]
+                "Undefined reference to function."
             );
             break;
         }
-
-        switch (Ref->Type)
+        int ParamCount = Entry->As.Function.ParamCount;
+        if (ParamCount != Ref->ArgCount)
         {
-        case REF_FUNCTION:
-        {
-            Backend_Patch_Call(&Jit->Backend, Ref->RefLocation, Entry->As.Function.Location);
-        } break;
-        case REF_VARIABLE:
-        {
-            Backend_Patch_LoadGlobal(&Jit->Backend, Ref->RefLocation, Entry->As.Variable.GlobalIndex);
-        } break;
+            Error_AtStr(
+                &Jit->Error, 
+                Ref->Str, 
+                Ref->Len, 
+                Ref->Line, 
+                Ref->Offset, 
+                "Expected %d argument%s but got %d instead.", 
+                ParamCount, ParamCount > 0? "s" : "", Ref->ArgCount
+            );
+            break;
         }
+        Backend_Patch_Call(&Jit->Backend, Ref->RefLocation, Entry->As.Function.Location);
     }
 
     if (Jit->Error.Available)
@@ -1612,11 +1617,9 @@ jit_result Jit_Compile(jit *Jit, jit_compilation_flags Flags, const char *Src)
 
     /* done */
     Backend_Disassemble(&Jit->Backend, &Jit->Global);
-    extern void exit(int);
-    exit(0);
     return (jit_result) {
         .GlobalData = Backend_GetDataPtr(&Jit->Backend),
-        .GlobalSymbol = Jit->Global.Head,
+        .GlobalSymbol = Jit->Global.Head->Next,
     };
 ErrReturn:
     return (jit_result) {
@@ -1628,7 +1631,7 @@ ErrReturn:
 
 jit_init32 Jit_GetInit32(jit *Jit, const jit_result *Result)
 {
-    def_table_entry *Init = Jit->Global.Tail;
+    def_table_entry *Init = Jit->Global.Head;
     ASSERT(Init, "nullptr");
     ASSERT(Init->Type == TYPE_FUNCTION, "unreachable");
     ASSERT(StrEqu(Init->As.Str.Ptr, "#init", 5), "unreachable");

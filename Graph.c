@@ -461,17 +461,19 @@ graph_state Graph_OnEntry(void)
     const char *Expr = 
 #if 0
         "f(x) = x*x\n"
-#elif 0
+#elif 1
+        "variable = g(10)\n"
+
         "f(x) = g(g(x))*h(x*1) + k(1, 2, 3, x, 4, 5, 6) + j(1, 0)\n"
         "h(x) = x*x\n"
         "k(a, b, c, d, e, f, g) = 1\n"
         "j(x, y) = g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))*g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))\n"
         "g(x) = x\n"
         "e(x) = variable*x\n"
-        "variable = g(10)\n"
 #else
         "m = 1/4\n"
-        "f(x) = x + m\n"
+        "k = 2*m\n"
+        "f(x) = x + k*m*x\n"
         "g(x) = x*m\n"
 #endif
         ;

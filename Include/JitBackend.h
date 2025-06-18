@@ -65,9 +65,8 @@ void Backend_Op_ArgStart(jit_backend *Backend);
 i32 Backend_Op_Call(jit_backend *Backend, int ArgCount); /* returns location for patching */
 void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLocation);
 
-void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex);
-i32 Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex); /* returns location for patching */
-void Backend_Patch_LoadGlobal(jit_backend *Backend, i32 LoadLocation, i32 GlobalLocation);
+void Backend_Op_LoadLocal(jit_backend *Backend, i32 LocalIndex);
+void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex); /* returns location for patching */
 void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex);
 #endif
 
