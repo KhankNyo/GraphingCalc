@@ -17,3 +17,4 @@ after data packing(1): 62909
 after data packing(2): 63397
 after data packing(3): 63628
 after ins packing(4):  64028
+after no bytecode(5):  65312

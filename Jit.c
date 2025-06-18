@@ -602,7 +602,7 @@ static void Jit_ParseUnary(jit *Jit)
     case TOK_MINUS: /* negate */
     {
         Jit_ParseUnary(Jit);
-        jit_eval_data *Top = EvalStack_Top(Jit);
+        jit_eval_data *Top = EvalStack_Pop(Jit);
         switch (Top->Type)
         {
         case EVAL_LOCAL:
@@ -624,6 +624,7 @@ static void Jit_ParseUnary(jit *Jit)
             Top->As.Const = -Top->As.Const;
         } break;
         }
+        EvalStack_Push(Jit, EvalData_Dynamic());
     } break; 
     case TOK_LPAREN: /* push('(expr)') */
     {

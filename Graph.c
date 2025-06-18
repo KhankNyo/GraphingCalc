@@ -460,7 +460,8 @@ graph_state Graph_OnEntry(void)
 
     const char *Expr = 
 #if 0
-        "f(x) = x*x\n"
+        "f(x) = x*x + g(x) + 3*x\n"
+        "g(x) = -x"
 #elif 1
         "variable = g(10)\n"
 

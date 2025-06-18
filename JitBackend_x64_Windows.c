@@ -46,6 +46,7 @@ typedef enum jit_location_type
 {
     LOCATION_MEM = 1,
     LOCATION_REG,
+    LOCATION_REF,
 } jit_location_type;
 typedef i8 jit_reg;
 typedef struct jit_mem 
@@ -55,11 +56,12 @@ typedef struct jit_mem
 } jit_mem;
 typedef struct jit_location
 {
-    jit_location_type Type;
     union {
         jit_mem Mem;
         jit_reg Reg;
+        struct jit_location *Ref;
     } As;
+    jit_location_type Type;
 } jit_location;
 #define JIT_REG_INVALID -1
 
@@ -287,10 +289,16 @@ static void Backend_EmitFloatOpcodeReg(jit_backend *Backend, u8 Opcode, int DstR
     EmitCode(Backend, 4, Backend->FloatOpcode, 0x0F, Opcode, ModRm);
 }
 
-static void Backend_EvalStack_Push(jit_backend *Backend, jit_location Location)
+static int Backend_EvalStack_IndexOf(jit_backend *Backend, const jit_location *Location)
+{
+    jit_location *Base = (jit_location *)Backend->EvalStack->Ptr;
+    return Location - Base;
+}
+static int Backend_EvalStack_Push(jit_backend *Backend, jit_location Location)
 {
     jit_location *Slot = Jit_Scratchpad_PushLeft(Backend->EvalStack, sizeof(*Slot));
     *Slot = Location;
+    return Backend_EvalStack_IndexOf(Backend, Slot);
 }
 static jit_location *Backend_EvalStack_Pop(jit_backend *Backend)
 {
@@ -305,6 +313,11 @@ static jit_location *Backend_EvalStack_Top(jit_backend *Backend, int IndexFromTo
     ASSERT(Backend->EvalStack->LeftCount >= (int)sizeof(jit_location), "empty stack");
     ASSERT(Backend->EvalStack->LeftCount >= (int)((IndexFromTop + 1) * sizeof(jit_location)), "empty stack");
     return (jit_location *)Jit_Scratchpad_LeftPtr(Backend->EvalStack) - IndexFromTop - 1;
+}
+static jit_location *Backend_EvalStack_Array(jit_backend *Backend, int Index)
+{
+    ASSERT(Index*(int)sizeof(jit_location) < Backend->EvalStack->LeftCount, "invalid index");
+    return (jit_location *)Backend->EvalStack->Ptr + Index;
 }
 static int Backend_EvalStack_Count(const jit_backend *Backend)
 {
@@ -374,6 +387,16 @@ void Backend_Reset(jit_backend *Backend, int DataSize)
     else UNREACHABLE();
 
     Backend->One = Backend_AllocateGlobal(Backend, 1.0);
+}
+
+static void Backend_ResetTmp(jit_backend *Backend)
+{
+    Backend->MaxStackSize = 0;
+    Backend->StackSize = 0;
+    Backend->EvalStack->LeftCount = 0;
+    for (int i = 0; i < REG_COUNT; i++)
+        Backend->EvalStackIndex[i] = -1;
+    Backend->BusyRegCount = 0;
 }
 
 
@@ -492,10 +515,6 @@ static void Backend_EmitCmpReg(jit_backend *Backend, jit_reg Dst, jit_reg B, sse
 
 static uint Backend_EmitFunctionEntry(jit_backend *Backend)
 {
-    /* reset stack */
-    Backend->MaxStackSize = 0;
-    Backend->StackSize = 0;
-
     /* push rbp 
      * mov rbp, rsp
      * sub rsp, memsize
@@ -554,33 +573,41 @@ static uint Backend_EmitCall(jit_backend *Backend, uint FunctionLocation)
 
 static void Backend_SpillReg(jit_backend *Backend, int RegCount);
 
+static bool8 Backend_RegIsBusy(const jit_backend *Backend, jit_reg Reg)
+{
+    return Backend->EvalStackIndex[Reg] != -1;
+}
+
+static void Backend_ForceAllocateReg(jit_backend *Backend, jit_reg Reg, i32 EvalStackIndex)
+{
+    ASSERT(Reg != JIT_REG_INVALID, "unreachable");
+    ASSERT(Reg < REG_COUNT, "unreachable");
+    ASSERT(!Backend_RegIsBusy(Backend, Reg), "attempting to allocate a busy reg");
+
+    Backend->BusyRegCount += 1;
+    Backend->EvalStackIndex[Reg] = EvalStackIndex;
+}
+
 static jit_reg Backend_TryAllocateReg(jit_backend *Backend)
 {
     for (jit_reg i = 0; i < REG_COUNT; i++)
     {
-        if (!Backend->BusyReg[i])
+        if (!Backend_RegIsBusy(Backend, i))
         {
-            Backend->BusyReg[i] = true;
-            Backend->BusyRegCount++;
+            Backend_ForceAllocateReg(Backend, i, 0);
             return i;
         }
     }
     return JIT_REG_INVALID;
 }
 
-static void Backend_ForceAllocateReg(jit_backend *Backend, jit_reg Reg)
-{
-    ASSERT(Reg < REG_COUNT, "unreachable");
-    Backend->BusyRegCount += Backend->BusyReg[Reg];
-    Backend->BusyReg[Reg] = true;
-}
-
 static void Backend_DeallocateReg(jit_backend *Backend, jit_reg Reg)
 {
     ASSERT(Reg < REG_COUNT, "invalid reg");
+    ASSERT(Backend_RegIsBusy(Backend, Reg), "attempting to deallocate a free reg");
 
-    Backend->BusyRegCount -= Backend->BusyReg[Reg];
-    Backend->BusyReg[Reg] = false;
+    Backend->BusyRegCount -= 1;
+    Backend->EvalStackIndex[Reg] = -1;
 }
 
 
@@ -653,7 +680,7 @@ static jit_reg Backend_AllocateReg(jit_backend *Backend)
 
 static void Backend_SpillReg(jit_backend *Backend, int NumberOfRegToSpill)
 {
-    int ElemCount = Backend_EvalStack_Count(Backend);
+#if 0
     for (int i = 0; 
         i < ElemCount
         && NumberOfRegToSpill > 0; 
@@ -676,14 +703,61 @@ static void Backend_SpillReg(jit_backend *Backend, int NumberOfRegToSpill)
         } break;
         }
     }
+#else
+    for (int i = 0, SpillCount = 0; SpillCount < NumberOfRegToSpill && i < REG_COUNT; i++)
+    {
+        if (!Backend_RegIsBusy(Backend, i))
+            continue;
+
+        i32 EvalStackIndex = Backend->EvalStackIndex[i];
+        jit_location *Location = Backend_EvalStack_Array(Backend, EvalStackIndex);
+        if (LOCATION_REG != Location->Type)
+            ASSERT(LOCATION_REG == Location->Type, "unreachable");
+
+        jit_mem SaveLocation = Backend_AllocateStack(Backend);
+        Backend_EmitStore(Backend, Location->As.Reg, SaveLocation);
+        Backend_DeallocateReg(Backend, Location->As.Reg);
+
+        *Location = LocationFromMem(SaveLocation);
+        SpillCount++;
+    }
+#endif
 }
 
 
-static jit_reg Backend_EmitMoveToReg(jit_backend *Backend, const jit_location *Location)
+static jit_reg Backend_EmitCopyToReg(jit_backend *Backend, jit_reg Reg, const jit_location *Location)
+{
+    switch (Location->Type)
+    {
+    case LOCATION_REF:
+    {
+        jit_location *Org = Location->As.Ref;
+        Backend_EmitCopyToReg(Backend, Reg, Org);
+    } break;
+    case LOCATION_MEM:
+    {
+        Backend_EmitLoad(Backend, Reg, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
+    } break;
+    case LOCATION_REG:
+    {
+        Backend_EmitMove(Backend, Reg, Location->As.Reg);
+    } break;
+    }
+    return Reg;
+}
+
+static jit_reg Backend_EmitMoveToReg(jit_backend *Backend, const jit_location *Location, int Index)
 {
     jit_reg Result = -1;
     switch (Location->Type)
     {
+    case LOCATION_REF:
+    {
+        jit_location *Org = Location->As.Ref;
+        jit_reg Reg = Backend_AllocateReg(Backend);
+        Backend->EvalStackIndex[Reg] = Index;
+        return Backend_EmitCopyToReg(Backend, Reg, Org);
+    } break;
     case LOCATION_REG:
     {
         Result = Location->As.Reg;
@@ -697,26 +771,10 @@ static jit_reg Backend_EmitMoveToReg(jit_backend *Backend, const jit_location *L
     return Result;
 }
 
-static jit_reg Backend_EmitCopyToReg(jit_backend *Backend, jit_reg Reg, const jit_location *Location)
-{
-    switch (Location->Type)
-    {
-    case LOCATION_MEM:
-    {
-        Backend_EmitLoad(Backend, Reg, Location->As.Mem.BaseReg, Location->As.Mem.Offset);
-    } break;
-    case LOCATION_REG:
-    {
-        Backend_EmitMove(Backend, Reg, Location->As.Reg);
-    } break;
-    }
-    return Reg;
-}
-
 static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
 {
-    int IrStackCount = Backend_EvalStack_Count(Backend);
-    ASSERT(ArgCount <= IrStackCount, "arg count");
+    int EvalStackCount = Backend_EvalStack_Count(Backend);
+    ASSERT(ArgCount <= EvalStackCount, "arg count");
 
     /* reserve physical stack space for arguments */
     int StackSpace = MAX(4, ArgCount); /* 4 args for shadow space */
@@ -726,19 +784,25 @@ static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
     int NumberOfArgReg = 0;
     for (int i = 0; i < ArgCount; i++)
     {
-        jit_location *Location = Backend_EvalStack_Top(Backend, ArgCount - i - 1);
+        int EvalStackIndex = EvalStackCount - ArgCount + i;
+        jit_location *Location = Backend_EvalStack_Array(Backend, EvalStackIndex);
         if (Backend_IsArgumentInReg(i))
         {
             jit_reg ArgReg = Backend_CallerSideArgReg(i);
             Backend_EmitCopyToReg(Backend, ArgReg, Location);
-            Backend_ForceAllocateReg(Backend, ArgReg);
+            Backend_ForceAllocateReg(Backend, ArgReg, EvalStackIndex);
             NumberOfArgReg++;
         }
         else /* argument is in memory */
         {
-            jit_reg Tmp = Backend_EmitMoveToReg(Backend, Location);
+            jit_reg Tmp = Backend_EmitMoveToReg(Backend, Location, EvalStackIndex);
             Backend_EmitStore(Backend, Tmp, Backend_CallerSideArgMem(i));
             Backend_DeallocateReg(Backend, Tmp);
+        }
+
+        if (LOCATION_REG == Location->Type)
+        {
+            Backend_DeallocateReg(Backend, Location->As.Reg);
         }
     }
 
@@ -759,27 +823,54 @@ static void Backend_EmitCallArgs(jit_backend *Backend, int ArgCount)
 
 
 
+typedef void (*backend_emit_fn)(jit_backend *, jit_reg Dst, jit_reg SrcBase, i32 Offset);
+typedef void (*backend_emit_reg_fn)(jit_backend *, jit_reg Dst, jit_reg Src);
+static void Backend_Op_Binary(
+    jit_backend *Backend, 
+    backend_emit_reg_fn EmitReg, 
+    backend_emit_fn Emit, 
+    jit_reg Accumulator, jit_location *Right)
+{
+    switch (Right->Type)
+    {
+    case LOCATION_REF:
+    {
+        Backend_Op_Binary(Backend, EmitReg, Emit, Accumulator, Right->As.Ref);
+    } break;
+    case LOCATION_REG:
+    {
+        EmitReg(Backend, Accumulator, Right->As.Reg);
+    } break;
+    case LOCATION_MEM:
+    {
+        Emit(Backend, Accumulator, Right->As.Mem.BaseReg, Right->As.Mem.Offset);
+    } break;
+    }
+}
 
-#define DEFINE_OP(name) \
+#if 1
+#define DEFINE_OP(name, commutative) \
 void Backend_Op_ ## name (jit_backend *Backend) {\
     jit_location *Right = Backend_EvalStack_Pop(Backend); \
     jit_location *Left = Backend_EvalStack_Pop(Backend); \
-    jit_reg LeftReg = Backend_EmitMoveToReg(Backend, Left); \
-    switch (Right->Type) { \
-    case LOCATION_REG: Backend_Emit ## name ## Reg(Backend, LeftReg, Right->As.Reg); break; \
-    case LOCATION_MEM: Backend_Emit ## name (Backend, LeftReg, Right->As.Mem.BaseReg, Right->As.Mem.Offset); break; \
-    } \
+    if (commutative && Left->Type != LOCATION_REG && Right->Type == LOCATION_REG) \
+        SWAP(jit_location, *Left, *Right);\
+    jit_reg LeftReg = Backend_EmitMoveToReg(Backend, Left, 0); \
+    Backend_Op_Binary(Backend, Backend_Emit ## name ## Reg, Backend_Emit ## name, LeftReg, Right);\
     jit_location Result = LocationFromReg(LeftReg); \
-    Backend_EvalStack_Push(Backend, Result); \
+    Backend->EvalStackIndex[LeftReg] = Backend_EvalStack_Push(Backend, Result); \
     if (LOCATION_REG == Right->Type) { \
         Backend_DeallocateReg(Backend, Right->As.Reg); \
     } \
 } \
 void Backend_Op_ ## name (jit_backend *Backend)
-DEFINE_OP(Add);
-DEFINE_OP(Sub);
-DEFINE_OP(Mul);
-DEFINE_OP(Div);
+DEFINE_OP(Add, true);
+DEFINE_OP(Sub, false);
+DEFINE_OP(Mul, true);
+DEFINE_OP(Div, false);
+#else
+#endif
+
 
 void Backend_Op_Swap(jit_backend *Backend)
 {
@@ -790,10 +881,11 @@ void Backend_Op_Swap(jit_backend *Backend)
 
 void Backend_Op_Cmp(jit_backend *Backend, sse_cmp_type CmpType)
 {
+    TODO("reg alloc");
     jit_location *Right = Backend_EvalStack_Pop(Backend);
     jit_location *Left = Backend_EvalStack_Pop(Backend);
-    jit_reg LeftReg = Backend_EmitMoveToReg(Backend, Left);
-    jit_reg RightReg = Backend_EmitMoveToReg(Backend, Right);
+    jit_reg LeftReg = Backend_EmitMoveToReg(Backend, Left, 0);
+    jit_reg RightReg = Backend_EmitMoveToReg(Backend, Right, 0);
 
     Backend_EmitCmpReg(Backend, LeftReg, RightReg, CmpType);
     Backend_DeallocateReg(Backend, RightReg);
@@ -823,22 +915,40 @@ void Backend_Op_Neg(jit_backend *Backend)
     jit_reg ZeroReg = Backend_AllocateReg(Backend);
     Backend_EmitLoadZero(Backend, ZeroReg);
 
+    Backend->EvalStackIndex[ZeroReg] = Backend_EvalStack_Push(Backend, LocationFromReg(ZeroReg));
     Backend_EvalStack_Push(Backend, Value);
-    Backend_EvalStack_Push(Backend, LocationFromReg(ZeroReg));
     Backend_Op_Sub(Backend);
 }
 
 
 i32 Backend_Op_FnEntry(jit_backend *Backend, int ParamCount)
 {
+    Backend_ResetTmp(Backend);
     i32 Location = Backend_EmitFunctionEntry(Backend);
     /* move arguments to stack */
+#if 0
     for (int i = 0; i < ParamCount && Backend_IsArgumentInReg(i); i++)
     {
         jit_reg ArgReg = Backend_CallerSideArgReg(i);
         jit_mem Param = Backend_CalleeSideParamMem(i);
         Backend_EmitStore(Backend, ArgReg, Param);
     }
+#else
+    for (int i = 0; i < ParamCount; i++)
+    {
+        if (Backend_IsArgumentInReg(i))
+        {
+            jit_reg ArgReg = Backend_CallerSideArgReg(i);
+            Backend_EvalStack_Push(Backend, LocationFromReg(ArgReg));
+            Backend_ForceAllocateReg(Backend, ArgReg, i);
+        }
+        else
+        {
+            jit_mem Mem = Backend_CalleeSideParamMem(i);
+            Backend_EvalStack_Push(Backend, LocationFromMem(Mem));
+        }
+    }
+#endif
     return Location;
 }
 i32 Backend_Op_FnReturn(jit_backend *Backend, i32 EntryLocation, bool8 HasReturnValue)
@@ -851,7 +961,12 @@ i32 Backend_Op_FnReturn(jit_backend *Backend, i32 EntryLocation, bool8 HasReturn
         {
             Backend_DeallocateReg(Backend, ReturnValue->As.Reg);
         }
+
     }
+
+    /* cleanup */
+
+    /* exit */
     Backend_EmitFunctionExit(Backend, EntryLocation);
     return Backend->ProgramSize;
 }
@@ -868,9 +983,9 @@ i32 Backend_Op_Call(jit_backend *Backend, int ArgCount) /* returns location for 
     uint CallLocation = Backend_EmitCall(Backend, 0); /* don't know the location yet */
 
     /* push return value onto the eval stack */
-    Backend_ForceAllocateReg(Backend, XMM(0));
     jit_location Result = LocationFromReg(XMM(0));
-    Backend_EvalStack_Push(Backend, Result);
+    int Index = Backend_EvalStack_Push(Backend, Result);
+    Backend_ForceAllocateReg(Backend, XMM(0), Index);
 
     /* return call site for instruction patching */
     return CallLocation;
@@ -888,11 +1003,20 @@ void Backend_Patch_Call(jit_backend *Backend, i32 CallLocation, i32 FunctionLoca
 
 void Backend_Op_LoadLocal(jit_backend *Backend, int LocalIndex)
 {
+#if 0
     jit_location Local = {
         .Type = LOCATION_MEM,
         .As.Mem = Backend_CalleeSideParamMem(LocalIndex),
     };
     Backend_EvalStack_Push(Backend, Local);
+#else
+    //jit_location *Local = Backend_EvalStack_Array(Backend, LocalIndex);
+    jit_location Reference = {
+        .Type = LOCATION_REF,
+        .As.Ref = Backend_EvalStack_Array(Backend, LocalIndex),
+    };
+    Backend_EvalStack_Push(Backend, Reference);
+#endif
 }
 
 void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex) /* returns location for patching */ 
@@ -910,7 +1034,7 @@ void Backend_Op_LoadGlobal(jit_backend *Backend, i32 GlobalIndex) /* returns loc
 void Backend_Op_StoreGlobal(jit_backend *Backend, i32 GlobalIndex)
 {
     jit_location *ValueToStore = Backend_EvalStack_Pop(Backend);
-    jit_reg Tmp = Backend_EmitMoveToReg(Backend, ValueToStore);
+    jit_reg Tmp = Backend_EmitMoveToReg(Backend, ValueToStore, Backend_EvalStack_IndexOf(Backend, ValueToStore));
     jit_mem Dst = {
         .BaseReg = Backend_GlobalPtrReg(), 
         .Offset = GlobalIndex,
