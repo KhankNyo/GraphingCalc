@@ -33,6 +33,8 @@ typedef struct jit_backend_x64_windows
     /* global management */
     i32 One;
 
+    /* instructions */
+    u8 CmpType;
     u8 StoreSingle[3];
     u8 LoadSingle[3];
     u8 FloatOpcode;

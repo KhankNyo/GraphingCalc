@@ -459,9 +459,11 @@ graph_state Graph_OnEntry(void)
 
 
     const char *Expr = 
-#if 0
+#if 1
         "f(x) = x*x + g(x) + 3*x\n"
-        "g(x) = -x"
+        "g(x) = -h(x)\n"
+        "h(x) = x\n"
+        "k(x) = (x > 0)*(x*x + 2*x) + (x <= 0)*x"
 #elif 1
         "variable = g(10)\n"
 
@@ -471,6 +473,12 @@ graph_state Graph_OnEntry(void)
         "j(x, y) = g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))*g(g(g(x*y)*g(x*y))*g(g(x*y)*g(x*y)))\n"
         "g(x) = x\n"
         "e(x) = variable*x\n"
+#elif 1
+        "f(x) = a(x) + b(x) + c(x) + d(x)\n"
+        "a(x) = x\n"
+        "b(x) = 1\n"
+        "c(x) = 1/2*x\n"
+        "d(x) = 0\n"
 #else
         "m = 1/4\n"
         "k = 2*m\n"
