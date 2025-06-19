@@ -25,7 +25,7 @@ typedef struct jit_backend_x64_windows
     int DataSize;
 
     /* reg management */
-    i32 EvalStackIndex[REG_COUNT];
+    struct jit_location *RegLocation[REG_COUNT];
     int BusyRegCount;
     /* stack management */
     int StackSize;
